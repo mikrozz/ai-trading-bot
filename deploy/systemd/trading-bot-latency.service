@@ -1,0 +1,12 @@
+[Unit]
+Description=AI Trading Bot latency probe (testnet + mainnet)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/ai-trading-bot
+Environment=PATH=/opt/ai-trading-bot/.venv/bin:/usr/local/bin:/usr/bin
+ExecStart=/opt/ai-trading-bot/.venv/bin/trading-bot --metrics-port 0 latency --rounds 3 --targets testnet,mainnet
+Nice=10

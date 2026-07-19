@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly Binance latency probe for AI Trading Bot
+
+[Timer]
+OnCalendar=*-*-* *:15:00
+Persistent=true
+RandomizedDelaySec=2m
+
+[Install]
+WantedBy=timers.target

@@ -34,6 +34,42 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("version", help="Версия пакета")
     sub.add_parser("smoke", help="Smoke-check Binance (ping/time/account/openOrders)")
 
+    latency = sub.add_parser(
+        "latency",
+        help="Latency probe REST/WS → testnet + mainnet (публичные эндпоинты)",
+    )
+    latency.add_argument("--rounds", type=int, default=5)
+    latency.add_argument("--symbol", default="BTCUSDT")
+    latency.add_argument("--no-ws", action="store_true", help="Без WS first-message")
+    latency.add_argument(
+        "--targets",
+        default="testnet,mainnet",
+        help="CSV: testnet,mainnet",
+    )
+    latency.add_argument(
+        "--hold-sec",
+        type=float,
+        default=0.0,
+        help="Держать процесс для scrape метрик (с --metrics-port)",
+    )
+
+    mainnet = sub.add_parser(
+        "mainnet-check",
+        help="Dry-run mainnet API (только чтение, без ордеров)",
+    )
+    mainnet.add_argument("--symbol", default="BTCUSDT")
+    mainnet.add_argument(
+        "--mainnet-env",
+        type=Path,
+        default=None,
+        help="Env с mainnet ключами (default: ~/.config/trading-bot/binance_mainnet.env)",
+    )
+    mainnet.add_argument(
+        "--require-signed",
+        action="store_true",
+        help="Требовать успешный signed account/openOrders",
+    )
+
     ingest = sub.add_parser("ingest", help="Запуск WS ingest → Redis Streams")
     ingest.add_argument(
         "--seconds",
@@ -115,6 +151,140 @@ def build_parser() -> argparse.ArgumentParser:
     risk.add_argument("--equity", type=float, default=1000.0)
     risk.add_argument("--notional", type=float, default=50.0)
     return parser
+
+
+async def cmd_latency(
+    config: Path | None,
+    env_file: Path | None,
+    *,
+    rounds: int,
+    symbol: str,
+    no_ws: bool,
+    targets: str,
+    hold_sec: float,
+    metrics_port: int,
+) -> int:
+    from trading_bot.metrics import (
+        LATENCY_PROBE_ERRORS,
+        LATENCY_PROBE_P50_MS,
+        LATENCY_PROBE_P95_MS,
+        start_metrics_server,
+    )
+    from trading_bot.ops.latency_probe import format_latency_table, run_latency_probe
+
+    settings = build_settings(config, env_file)
+    setup_logging(settings.log_level)
+    wanted = {t.strip().lower() for t in targets.split(",") if t.strip()}
+    rest: dict[str, str] = {}
+    ws: dict[str, str] = {}
+    if "testnet" in wanted:
+        rest["testnet"] = settings.binance_base_url
+        if not no_ws:
+            ws["testnet"] = (
+                f"{settings.binance_ws_base_url.rstrip('/')}/ws/"
+                f"{symbol.lower()}@bookTicker"
+            )
+    if "mainnet" in wanted:
+        rest["mainnet"] = settings.binance_prod_base_url
+        if not no_ws:
+            ws["mainnet"] = (
+                f"{settings.binance_prod_ws_base_url.rstrip('/')}/ws/"
+                f"{symbol.lower()}@bookTicker"
+            )
+    if not rest:
+        print("LATENCY_FAIL no targets")
+        return 2
+
+    if metrics_port > 0:
+        start_metrics_server(metrics_port)
+
+    result = await run_latency_probe(
+        rest_targets=rest,
+        ws_targets=ws or None,
+        symbol=symbol,
+        rounds=rounds,
+    )
+    for s in result.summaries:
+        LATENCY_PROBE_P50_MS.labels(target=s.target, endpoint=s.endpoint).set(s.p50_ms)
+        LATENCY_PROBE_P95_MS.labels(target=s.target, endpoint=s.endpoint).set(s.p95_ms)
+        LATENCY_PROBE_ERRORS.labels(target=s.target, endpoint=s.endpoint).set(s.errors)
+
+    print(format_latency_table(result))
+    mainnet_rows = [s for s in result.summaries if s.target == "mainnet"]
+    testnet_rows = [s for s in result.summaries if s.target == "testnet"]
+    # go-live gate: mainnet критичен; testnet с docker01 может флапать
+    mainnet_ok = bool(mainnet_rows) and all(s.errors == 0 for s in mainnet_rows)
+    if "mainnet" not in wanted:
+        mainnet_ok = all(s.errors == 0 for s in result.summaries)
+    p95_rest = [
+        s.p95_ms
+        for s in mainnet_rows
+        if s.endpoint in {"ping", "time", "ticker_price"} and s.ok > 0
+    ]
+    verdict = "LATENCY_OK" if mainnet_ok else "LATENCY_FAIL"
+    extra = ""
+    if p95_rest:
+        extra = f" mainnet_rest_p95_ms={max(p95_rest):.1f}"
+        if max(p95_rest) > 500:
+            extra += " WARN_high_latency"
+    if testnet_rows and any(s.errors for s in testnet_rows):
+        extra += " testnet_partial_errors"
+    print(f"{verdict} host={result.host_hint} rounds={rounds}{extra}")
+    if hold_sec > 0:
+        await asyncio.sleep(hold_sec)
+    return 0 if mainnet_ok else 1
+
+
+async def cmd_mainnet_check(
+    config: Path | None,
+    env_file: Path | None,
+    *,
+    symbol: str,
+    mainnet_env: Path | None,
+    require_signed: bool,
+) -> int:
+    from trading_bot.metrics import MAINNET_CHECK_OK
+    from trading_bot.ops.mainnet_check import load_mainnet_credentials, run_mainnet_check
+
+    settings = build_settings(config, env_file)
+    setup_logging(settings.log_level)
+    api_key, api_secret = load_mainnet_credentials(mainnet_env)
+    result = await run_mainnet_check(
+        base_url=settings.binance_prod_base_url,
+        symbol=symbol,
+        api_key=api_key,
+        api_secret=api_secret,
+        require_signed=require_signed,
+    )
+    for item in result.items:
+        status = "OK" if item.ok else "FAIL"
+        print(
+            f"  [{status}] {item.name:14} {item.latency_ms:7.1f}ms  {item.detail}"
+        )
+    if require_signed and not result.signed_attempted:
+        MAINNET_CHECK_OK.set(0)
+        print("MAINNET_CHECK_FAIL signed_required_but_no_keys")
+        print(
+            "Put keys in ~/.config/trading-bot/binance_mainnet.env "
+            "(BINANCE_MAINNET_API_KEY/SECRET) — read-only permissions."
+        )
+        return 2
+    if require_signed and not result.signed_ok:
+        MAINNET_CHECK_OK.set(0)
+        print("MAINNET_CHECK_FAIL signed_failed")
+        return 1
+
+    ok = result.public_ok and (not require_signed or result.signed_ok)
+    MAINNET_CHECK_OK.set(1.0 if ok else 0.0)
+    tag = "MAINNET_CHECK_OK" if ok else "MAINNET_CHECK_FAIL"
+    mode = "public+signed" if result.signed_attempted else "public_only"
+    geo = " geo_blocked=1" if result.geo_blocked else ""
+    print(
+        f"{tag} mode={mode} base={result.base_url} "
+        f"public_ok={int(result.public_ok)} signed_ok={int(result.signed_ok)}{geo}"
+    )
+    print("notes: " + ", ".join(result.notes))
+    return 0 if ok else 1
 
 
 async def cmd_smoke(config: Path | None, env_file: Path | None) -> int:
@@ -654,6 +824,35 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "smoke":
         raise SystemExit(asyncio.run(cmd_smoke(args.config, args.env_file)))
+
+    if args.command == "latency":
+        raise SystemExit(
+            asyncio.run(
+                cmd_latency(
+                    args.config,
+                    args.env_file,
+                    rounds=args.rounds,
+                    symbol=args.symbol,
+                    no_ws=args.no_ws,
+                    targets=args.targets,
+                    hold_sec=args.hold_sec,
+                    metrics_port=args.metrics_port,
+                )
+            )
+        )
+
+    if args.command == "mainnet-check":
+        raise SystemExit(
+            asyncio.run(
+                cmd_mainnet_check(
+                    args.config,
+                    args.env_file,
+                    symbol=args.symbol,
+                    mainnet_env=args.mainnet_env,
+                    require_signed=args.require_signed,
+                )
+            )
+        )
 
     if args.command == "ingest":
         raise SystemExit(

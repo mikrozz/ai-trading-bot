@@ -59,6 +59,25 @@ REQUEST_LATENCY = Histogram(
     ["endpoint"],
     buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0),
 )
+LATENCY_PROBE_P50_MS = Gauge(
+    "trading_latency_probe_p50_ms",
+    "Latency probe p50 (ms)",
+    ["target", "endpoint"],
+)
+LATENCY_PROBE_P95_MS = Gauge(
+    "trading_latency_probe_p95_ms",
+    "Latency probe p95 (ms)",
+    ["target", "endpoint"],
+)
+LATENCY_PROBE_ERRORS = Gauge(
+    "trading_latency_probe_errors",
+    "Latency probe error count in last run",
+    ["target", "endpoint"],
+)
+MAINNET_CHECK_OK = Gauge(
+    "trading_mainnet_check_ok",
+    "Last mainnet dry-run check (1=ok)",
+)
 
 _started = False
 
