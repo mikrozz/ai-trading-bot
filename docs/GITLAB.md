@@ -1,17 +1,17 @@
-# GitLab
+# Git hosting / CI
 
-CI уже в репозитории: [`.gitlab-ci.yml`](../.gitlab-ci.yml) — stages `lint` → `test` → `build`.
+Remote сейчас: **GitHub** `git@github.com:mikrozz/ai-trading-bot.git`  
+Репозиторий: https://github.com/mikrozz/ai-trading-bot
 
-## Подключить remote
+В репо лежит [`.gitlab-ci.yml`](../.gitlab-ci.yml) (lint → test → build) — на GitHub он **сам не запустится**. Для GitHub нужен `.github/workflows/` (можно добавить отдельно).
 
-На GitLab создайте пустой проект (без README), затем:
+## Если переносите на GitLab
+
+Создайте пустой проект (без README), затем:
 
 ```bash
 cd /opt/ai-trading-bot
-git remote add origin git@YOUR_GITLAB_HOST:GROUP/ai-trading-bot.git
-# или HTTPS:
-# git remote add origin https://YOUR_GITLAB_HOST/GROUP/ai-trading-bot.git
-
+git remote set-url origin git@YOUR_GITLAB_HOST:GROUP/ai-trading-bot.git
 git push -u origin main
 ```
 
