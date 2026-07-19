@@ -1,44 +1,42 @@
 # Monitoring
 
-## Bot metrics
+Центральный стек (этот хост `192.168.10.155`):
 
-CLI поднимает Prometheus endpoint:
+| Сервис | URL |
+|--------|-----|
+| Grafana | http://192.168.10.155:3001 |
+| Dashboard | http://192.168.10.155:3001/d/ai-trading-bot/ai-trading-bot |
+| Prometheus | http://192.168.10.155:9091 |
 
-```bash
-trading-bot --metrics-port 9108 paper-live --seconds 300
-curl -s localhost:9108/metrics | grep trading_
-```
+## Метрики бота
 
-Ключевые метрики:
-- `trading_ws_messages_total`
-- `trading_writer_rows_total`
-- `trading_orders_total`
-- `trading_paper_equity`
-- `trading_book_updates_total`
-- `trading_risk_denies_total`
+systemd экспортеры на хосте:
 
-## Prometheus + Grafana (compose)
-
-```bash
-docker compose --profile monitoring up -d prometheus grafana
-# Prometheus: http://127.0.0.1:9094
-# Grafana:    http://127.0.0.1:3003  (admin/admin — сменить сразу)
-```
-
-Порты только на localhost (на этом хосте 9090–9093/3000–3002 заняты другими стеками).  
-Dashboard **AI Trading Bot** подтягивается из provisioning.
-
-Scrape targets:
-- `host.docker.internal:9108` — ingest
-- `host.docker.internal:9109` — writer
-
-## systemd continuous pipeline
+| Порт | Сервис |
+|------|--------|
+| 9108 | `trading-bot-ingest` |
+| 9109 | `trading-bot-writer` |
+| 9110 | `trading-bot-paper-live` |
 
 ```bash
-sudo bash /opt/ai-trading-bot/deploy/systemd/install.sh
+curl -s http://192.168.10.155:9110/metrics | grep trading_paper
 systemctl status trading-bot-ingest trading-bot-writer trading-bot-paper-live
-curl -s localhost:9108/metrics | grep trading_ws
-curl -s localhost:9109/metrics | grep trading_writer
-curl -s localhost:9110/metrics | grep trading_paper
-# state: data/paper_state_BTCUSDT.json
 ```
+
+Scrape в центральный Prometheus:  
+`/root/monitoring/prometheus/file_sd/ai-trading-bot.json`  
+job `ai-trading-bot` в `/root/monitoring/prometheus/prometheus.yml`.
+
+Dashboard provisioning:  
+`/root/monitoring/grafana/dashboards/ai-trading-bot.json`  
+(копия из `monitoring/grafana/dashboards/trading-bot.json` в репо).
+
+После изменения дашборда в репо:
+
+```bash
+bash /opt/ai-trading-bot/deploy/sync-monitoring.sh
+```
+
+## Локальный compose profile `monitoring`
+
+Опционален. Основной UI — Grafana на **:3001**. Локальный Grafana на :3003 отключён.

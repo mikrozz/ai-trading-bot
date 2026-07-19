@@ -54,7 +54,7 @@ trading-bot soak --cycles 3 --symbol BTCUSDT
 trading-bot --metrics-port 9108 paper-live --seconds 300
 ```
 
-Мониторинг: [MONITORING.md](MONITORING.md)  
+Мониторинг: [MONITORING.md](MONITORING.md) · Grafana http://192.168.10.155:3001/d/ai-trading-bot/ai-trading-bot  
 Ansible: [ansible/README.md](ansible/README.md)  
 GitHub/CI: [docs/GITLAB.md](docs/GITLAB.md) · Actions: `.github/workflows/ci.yml`  
 systemd: `deploy/systemd/install.sh`
