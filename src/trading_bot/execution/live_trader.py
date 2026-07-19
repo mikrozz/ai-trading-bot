@@ -324,6 +324,17 @@ class TestnetLiveTrader:
         ORDERS_TOTAL.labels(action="place", symbol=self.symbol, mode=MODE).inc()
         self._order_ts.append(time.time())
         self.orders_placed += 1
+        append_audit(
+            AUDIT_PATH,
+            {
+                "event": "live_order_placed",
+                "side": side,
+                "order_id": order_id,
+                "status": raw.get("status"),
+                "executed_qty": float(raw.get("executedQty") or 0),
+                "quantity": qty_s,
+            },
+        )
         if order_id:
             try:
                 synced = await sync_order(
