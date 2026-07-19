@@ -135,9 +135,17 @@ class EventBlackoutGuard:
         self,
         config: EventBlackoutConfig,
         events: list[MacroEvent] | None = None,
+        *,
+        calendar_file: Path | None = None,
+        reload_on_mtime: bool = True,
     ) -> None:
         self.config = config
         self.events = list(events or [])
+        self._calendar_file = calendar_file
+        self._reload_on_mtime = reload_on_mtime
+        self._mtime: float | None = None
+        if self._calendar_file is not None and self._calendar_file.is_file():
+            self._mtime = self._calendar_file.stat().st_mtime
 
     @classmethod
     def from_settings(
@@ -152,9 +160,35 @@ class EventBlackoutGuard:
         if not p.is_absolute() and repo_root is not None:
             p = repo_root / p
         events = load_events_calendar(p) if config.enabled else []
-        return cls(config=config, events=events)
+        return cls(
+            config=config,
+            events=events,
+            calendar_file=p if config.enabled else None,
+            reload_on_mtime=True,
+        )
+
+    def _maybe_reload(self) -> None:
+        if not self._reload_on_mtime or self._calendar_file is None:
+            return
+        if not self._calendar_file.is_file():
+            if self.events:
+                self.events = []
+                self._mtime = None
+                log.info("event_calendar_cleared", path=str(self._calendar_file))
+            return
+        mtime = self._calendar_file.stat().st_mtime
+        if self._mtime is not None and mtime <= self._mtime:
+            return
+        self.events = load_events_calendar(self._calendar_file)
+        self._mtime = mtime
+        log.info(
+            "event_calendar_reloaded",
+            path=str(self._calendar_file),
+            events=len(self.events),
+        )
 
     def active_window(self, now: datetime | None = None) -> BlackoutWindow | None:
+        self._maybe_reload()
         if not self.config.enabled or not self.events:
             return None
         ts = _as_utc(now or datetime.now(timezone.utc))

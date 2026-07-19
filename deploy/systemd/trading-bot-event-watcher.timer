@@ -1,0 +1,10 @@
+[Unit]
+Description=Run AI Trading Bot event watcher every 6 hours
+
+[Timer]
+OnCalendar=*-*-* 00/6:10:00
+Persistent=true
+Unit=trading-bot-event-watcher.service
+
+[Install]
+WantedBy=timers.target

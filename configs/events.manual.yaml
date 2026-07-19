@@ -1,0 +1,9 @@
+# Manual / override macro events (merged by event-watcher into events.yaml).
+# Times are UTC ISO-8601. Prefer this file for one-off blackouts the auto calendar misses.
+#
+# Example:
+# events:
+#   - name: CUSTOM_BLACKOUT
+#     at: "2026-09-01T14:00:00Z"
+
+events: []

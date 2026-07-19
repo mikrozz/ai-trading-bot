@@ -39,6 +39,21 @@ systemctl start trading-bot-equity-report.service
 systemctl list-timers trading-bot-equity-report.timer
 ```
 
+## Event watcher (macro calendar)
+
+- Script: `deploy/event-watcher.sh` / `trading-bot event-watcher`
+- Source: Forex Factory week JSON → merge `configs/events.manual.yaml` → write `configs/events.yaml`
+- Telegram: новые / ближайшие high-impact USD (state: `data/event_watcher_state.json`)
+- Timer: `trading-bot-event-watcher.timer` — каждые **6ч** (`:10`)
+- Blackout в `testnet-live` перечитывает `events.yaml` по mtime (рестарт не нужен)
+
+```bash
+bash /opt/ai-trading-bot/deploy/event-watcher.sh --dry-run
+bash /opt/ai-trading-bot/deploy/event-watcher.sh --no-telegram   # только обновить yaml
+systemctl start trading-bot-event-watcher.service
+systemctl list-timers trading-bot-event-watcher.timer
+```
+
 Scrape в центральный Prometheus:  
 `/root/monitoring/prometheus/file_sd/ai-trading-bot.json`  
 job `ai-trading-bot` в `/root/monitoring/prometheus/prometheus.yml`.

@@ -15,11 +15,14 @@ cp -f "$ROOT/deploy/systemd/trading-bot-latency.service" "$UNIT_DIR/"
 cp -f "$ROOT/deploy/systemd/trading-bot-latency.timer" "$UNIT_DIR/"
 cp -f "$ROOT/deploy/systemd/trading-bot-equity-report.service" "$UNIT_DIR/"
 cp -f "$ROOT/deploy/systemd/trading-bot-equity-report.timer" "$UNIT_DIR/"
+cp -f "$ROOT/deploy/systemd/trading-bot-event-watcher.service" "$UNIT_DIR/"
+cp -f "$ROOT/deploy/systemd/trading-bot-event-watcher.timer" "$UNIT_DIR/"
 chmod +x \
   "$ROOT/deploy/backup-timescaledb.sh" \
   "$ROOT/deploy/restore-timescaledb.sh" \
   "$ROOT/deploy/sync-monitoring.sh" \
-  "$ROOT/deploy/daily-equity-report.sh"
+  "$ROOT/deploy/daily-equity-report.sh" \
+  "$ROOT/deploy/event-watcher.sh"
 systemctl daemon-reload
 # testnet-live конфликтует с paper-live — по умолчанию включаем testnet-live
 systemctl disable --now trading-bot-paper-live.service 2>/dev/null || true
@@ -30,10 +33,11 @@ systemctl enable --now \
   trading-bot-db-backup.timer \
   trading-bot-soak.timer \
   trading-bot-latency.timer \
-  trading-bot-equity-report.timer
+  trading-bot-equity-report.timer \
+  trading-bot-event-watcher.timer
 systemctl --no-pager --full status \
   trading-bot-ingest.service \
   trading-bot-writer.service \
   trading-bot-testnet-live.service || true
 systemctl --no-pager list-timers 'trading-bot-*.timer' || true
-echo "INSTALLED: ingest + writer + testnet-live + timers (backup/soak/latency/equity-report)"
+echo "INSTALLED: ingest + writer + testnet-live + timers (backup/soak/latency/equity-report/event-watcher)"

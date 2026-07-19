@@ -103,6 +103,46 @@ def build_parser() -> argparse.ArgumentParser:
         help="Не отправлять в Telegram",
     )
 
+    event_watcher = sub.add_parser(
+        "event-watcher",
+        help="Макро-календарь → configs/events.yaml + Telegram",
+    )
+    event_watcher.add_argument(
+        "--calendar",
+        type=Path,
+        default=Path("configs/events.yaml"),
+    )
+    event_watcher.add_argument(
+        "--manual",
+        type=Path,
+        default=Path("configs/events.manual.yaml"),
+    )
+    event_watcher.add_argument(
+        "--state",
+        type=Path,
+        default=Path("data/event_watcher_state.json"),
+    )
+    event_watcher.add_argument(
+        "--ff-url",
+        default="https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+    )
+    event_watcher.add_argument("--hours-ahead", type=int, default=48)
+    event_watcher.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Не писать calendar/state, не слать Telegram",
+    )
+    event_watcher.add_argument(
+        "--no-telegram",
+        action="store_true",
+        help="Обновить calendar, без Telegram",
+    )
+    event_watcher.add_argument(
+        "--force-notify",
+        action="store_true",
+        help="Всегда слать Telegram",
+    )
+
     ingest = sub.add_parser("ingest", help="Запуск WS ingest → Redis Streams")
     ingest.add_argument(
         "--seconds",
@@ -1130,6 +1170,41 @@ def main(argv: list[str] | None = None) -> None:
                 )
             )
         )
+
+    if args.command == "event-watcher":
+        from trading_bot.ops.event_watcher import main as event_watcher_main
+
+        proxy = os.environ.get("HTTPS_PROXY", "http://192.168.10.155:3128")
+        argv = [
+            "--calendar",
+            str(args.calendar),
+            "--manual",
+            str(args.manual),
+            "--state",
+            str(args.state),
+            "--ff-url",
+            str(args.ff_url),
+            "--hours-ahead",
+            str(args.hours_ahead),
+            "--token-file",
+            os.environ.get(
+                "TELEGRAM_TOKEN_FILE",
+                "/opt/network-monitor/secrets/telegram_bot_token",
+            ),
+            "--chat-id",
+            os.environ.get("TELEGRAM_CHAT_ID", "608509788"),
+            "--proxy",
+            proxy,
+            "--webhook-url",
+            os.environ.get("TELEGRAM_WEBHOOK_URL", "http://127.0.0.1:9999/"),
+        ]
+        if args.dry_run:
+            argv.append("--dry-run")
+        if args.no_telegram:
+            argv.append("--no-telegram")
+        if args.force_notify:
+            argv.append("--force-notify")
+        raise SystemExit(event_watcher_main(argv))
 
     if args.command == "ingest":
         raise SystemExit(
