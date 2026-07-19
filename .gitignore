@@ -30,9 +30,11 @@ htmlcov/
 
 # Data / runtime
 data/
+!data/models/.gitkeep
 *.db
 logs/
 *.log
+data/paper_state_*.json
 
 # Docker volumes leftovers
 postgres-data/

@@ -58,9 +58,10 @@
   loop:
     - trading-bot-ingest.service
     - trading-bot-writer.service
+    - trading-bot-paper-live.service
   notify: Reload systemd trading units
 
-- name: Enable continuous ingest/writer
+- name: Enable continuous ingest/writer/paper-live
   ansible.builtin.systemd:
     name: "{{ item }}"
     enabled: true
@@ -69,4 +70,5 @@
   loop:
     - trading-bot-ingest.service
     - trading-bot-writer.service
+    - trading-bot-paper-live.service
 

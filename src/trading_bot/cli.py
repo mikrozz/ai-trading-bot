@@ -93,8 +93,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("data/models/xgb_btc_5m.joblib"),
     )
     live.add_argument("--cash", type=float, default=1000.0)
-    live.add_argument("--seconds", type=int, default=120)
+    live.add_argument(
+        "--seconds",
+        type=int,
+        default=120,
+        help="Длительность (0 = до SIGTERM/systemd)",
+    )
     live.add_argument("--no-redis", action="store_true")
+    live.add_argument(
+        "--no-restore",
+        action="store_true",
+        help="Не восстанавливать paper state с диска",
+    )
 
     soak = sub.add_parser("soak", help="Testnet soak: LIMIT far + cancel")
     soak.add_argument("--symbol", default="BTCUSDT")
@@ -508,6 +518,7 @@ async def cmd_paper_live(
     cash: float,
     seconds: int,
     no_redis: bool,
+    no_restore: bool = False,
 ) -> int:
     from trading_bot.paper.live import run_live_paper
 
@@ -536,6 +547,7 @@ async def cmd_paper_live(
             stop_loss=settings.risk.stop_loss,
             listing_ban_minutes=settings.risk.listing_ban_minutes,
         ),
+        restore_state=not no_restore,
     )
     log.info("paper_live_done", **summary)
     print(
@@ -543,7 +555,8 @@ async def cmd_paper_live(
         f"equity={summary['equity']:.2f} fills={summary['fills']} "
         f"book_updates={summary['book_updates']} ws_msg={summary['messages_ok']}"
     )
-    # успех: WS жив; closed_bars может быть 0 на коротком окне 5m
+    if seconds <= 0:
+        return 0
     return 0 if summary["messages_ok"] > 0 else 1
 
 
@@ -703,6 +716,7 @@ def main(argv: list[str] | None = None) -> None:
                     args.cash,
                     args.seconds,
                     args.no_redis,
+                    args.no_restore,
                 )
             )
         )

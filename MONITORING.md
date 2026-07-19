@@ -36,7 +36,9 @@ Scrape targets:
 
 ```bash
 sudo bash /opt/ai-trading-bot/deploy/systemd/install.sh
-systemctl status trading-bot-ingest trading-bot-writer
+systemctl status trading-bot-ingest trading-bot-writer trading-bot-paper-live
 curl -s localhost:9108/metrics | grep trading_ws
 curl -s localhost:9109/metrics | grep trading_writer
+curl -s localhost:9110/metrics | grep trading_paper
+# state: data/paper_state_BTCUSDT.json
 ```
