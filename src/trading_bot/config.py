@@ -47,6 +47,16 @@ class LiveTestnetConfig(BaseSettings):
     max_orders_per_hour: int = 20
 
 
+class EventsConfig(BaseSettings):
+    """Macro-event blackout around scheduled releases (FOMC/CPI/…)."""
+
+    enabled: bool = True
+    minutes_before: int = 30
+    minutes_after: int = 60
+    timezone: str = "UTC"
+    calendar_path: str = "configs/events.yaml"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file_encoding="utf-8",
@@ -76,6 +86,7 @@ class Settings(BaseSettings):
     risk: RiskConfig = Field(default_factory=RiskConfig)
     paper: PaperConfig = Field(default_factory=PaperConfig)
     live_testnet: LiveTestnetConfig = Field(default_factory=LiveTestnetConfig)
+    events: EventsConfig = Field(default_factory=EventsConfig)
 
     fees_maker: float = 0.001
     fees_taker: float = 0.001
@@ -145,6 +156,7 @@ def build_settings(
     risk_raw = yaml_data.pop("risk", {}) or {}
     paper_raw = yaml_data.pop("paper", {}) or {}
     live_testnet_raw = yaml_data.pop("live_testnet", {}) or {}
+    events_raw = yaml_data.pop("events", {}) or {}
     fees = yaml_data.pop("fees", {}) or {}
     slippage = yaml_data.pop("slippage", {}) or {}
     yaml_data.pop("ingest", None)
@@ -177,4 +189,27 @@ def build_settings(
         settings.live_testnet.position_fraction = min(
             settings.live_testnet.position_fraction, 0.05
         )
+    if events_raw:
+        settings.events = EventsConfig(**events_raw)
     return settings
+
+
+def build_event_blackout_guard(
+    settings: Settings,
+    *,
+    repo_root: Path | None = None,
+):
+    """Build EventBlackoutGuard from settings + calendar file (no-op if disabled/empty)."""
+    from trading_bot.risk.event_blackout import EventBlackoutConfig, EventBlackoutGuard
+
+    root = repo_root
+    if root is None:
+        root = Path(__file__).resolve().parents[2]
+    cfg = EventBlackoutConfig(
+        enabled=settings.events.enabled,
+        minutes_before=settings.events.minutes_before,
+        minutes_after=settings.events.minutes_after,
+        timezone=settings.events.timezone,
+        calendar_path=settings.events.calendar_path,
+    )
+    return EventBlackoutGuard.from_settings(cfg, repo_root=root)

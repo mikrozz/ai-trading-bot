@@ -93,6 +93,11 @@ LIVE_KILL_SWITCH = Gauge(
     "Live/testnet kill-switch active (1=on)",
     ["symbol", "mode"],
 )
+EVENT_BLACKOUT = Counter(
+    "trading_event_blackout_total",
+    "New opens blocked by macro/event blackout window",
+    ["symbol", "event", "mode"],
+)
 
 _started = False
 

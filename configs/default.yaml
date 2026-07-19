@@ -40,6 +40,15 @@ live_testnet:
   cooldown_bars: 3
   max_orders_per_hour: 20
 
+# Macro/event blackout: block NEW opens around scheduled events (exits still allowed).
+# Calendar: configs/events.yaml (UTC ISO). Missing/empty calendar → no-op.
+events:
+  enabled: true
+  minutes_before: 30
+  minutes_after: 60
+  timezone: UTC
+  calendar_path: configs/events.yaml
+
 ingest:
   depth_levels: 20
   redis_stream_maxlen: 100000

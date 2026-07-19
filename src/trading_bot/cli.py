@@ -9,7 +9,7 @@ import signal
 import sys
 from pathlib import Path
 
-from trading_bot.config import build_settings
+from trading_bot.config import build_event_blackout_guard, build_settings
 from trading_bot.exchange.binance_spot import BinanceSpotClient
 from trading_bot.logging_setup import get_logger, setup_logging
 from trading_bot.risk.gates import HardRiskGate, RiskLimits, RiskState
@@ -803,6 +803,7 @@ async def cmd_paper(
             stop_loss=settings.risk.stop_loss,
             listing_ban_minutes=settings.risk.listing_ban_minutes,
         ),
+        event_blackout=build_event_blackout_guard(settings),
     )
     state = engine.run_backfill(df)
     ret = (state.equity / cash) - 1.0
@@ -862,6 +863,7 @@ async def cmd_paper_live(
             stop_loss=settings.risk.stop_loss,
             listing_ban_minutes=settings.risk.listing_ban_minutes,
         ),
+        event_blackout=build_event_blackout_guard(settings),
         restore_state=not no_restore,
     )
     log.info("paper_live_done", **summary)
@@ -945,6 +947,7 @@ async def cmd_testnet_live(
             risk_limits=risk_limits,
             seconds=seconds,
             restore_state=not no_restore,
+            event_blackout=build_event_blackout_guard(settings),
         )
     finally:
         await client.close()

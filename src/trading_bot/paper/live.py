@@ -18,6 +18,7 @@ from trading_bot.marketdata.ws_ingest import BinanceWsIngest
 from trading_bot.metrics import BOOK_UPDATES, PAPER_EQUITY, PAPER_FILLS, PAPER_KILL_SWITCH
 from trading_bot.ml.dataset import load_klines_df
 from trading_bot.paper.engine import PaperEngine, PaperPosition
+from trading_bot.risk.event_blackout import EventBlackoutGuard
 from trading_bot.risk.gates import RiskLimits
 from trading_bot.storage.redis_streams import RedisStreamPublisher
 
@@ -255,6 +256,7 @@ async def run_live_paper(
     min_hold_bars: int = 6,
     cooldown_bars: int = 3,
     position_fraction: float = 0.10,
+    event_blackout: EventBlackoutGuard | None = None,
 ) -> dict:
     history = await load_klines_df(database_url, symbol=symbol, interval=interval)
     if len(history) < 100:
@@ -272,6 +274,7 @@ async def run_live_paper(
         cooldown_bars=cooldown_bars,
         position_fraction=position_fraction,
         risk_limits=risk_limits,
+        event_blackout=event_blackout,
     )
     sf = state_file or _state_path(symbol)
     if restore_state:

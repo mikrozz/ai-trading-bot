@@ -29,6 +29,7 @@ from trading_bot.marketdata.book_state import BookStateStore
 from trading_bot.marketdata.ws_ingest import BinanceWsIngest
 from trading_bot.metrics import (
     BOOK_UPDATES,
+    EVENT_BLACKOUT,
     LIVE_EQUITY,
     LIVE_KILL_SWITCH,
     LIVE_POSITION_QTY,
@@ -37,6 +38,7 @@ from trading_bot.metrics import (
 )
 from trading_bot.ml.dataset import load_klines_df
 from trading_bot.ml.train_xgb import load_model
+from trading_bot.risk.event_blackout import EventBlackoutGuard
 from trading_bot.risk.gates import HardRiskGate, RiskDecision, RiskLimits, RiskState
 from trading_bot.storage.redis_streams import RedisStreamPublisher
 
@@ -89,6 +91,7 @@ class TestnetLiveTrader:
         history: pd.DataFrame,
         publisher: RedisStreamPublisher | None = None,
         state_file: Path | None = None,
+        event_blackout: EventBlackoutGuard | None = None,
     ) -> None:
         if cfg.position_fraction > 0.05 + 1e-12:
             raise ValueError("live_testnet position_fraction capped at 0.05")
@@ -102,6 +105,7 @@ class TestnetLiveTrader:
         self.history = history.reset_index(drop=True)
         self.book_store = BookStateStore()
         self.state_file = state_file or _state_path(self.symbol)
+        self.event_blackout = event_blackout
         self.position: LivePosition | None = None
         self.equity = 0.0
         self.bars_seen = 0
@@ -453,6 +457,31 @@ class TestnetLiveTrader:
                         "equity": self.equity,
                         "proba": proba,
                     }
+                if self.event_blackout is not None:
+                    win = self.event_blackout.should_block_open(
+                        datetime.now(timezone.utc)
+                    )
+                    if win is not None:
+                        EVENT_BLACKOUT.labels(
+                            symbol=self.symbol, event=win.event.name, mode=MODE
+                        ).inc()
+                        log.info(
+                            "event_blackout",
+                            event=win.event.name,
+                            event_at=win.event.at_utc.isoformat(),
+                            window_start=win.start.isoformat(),
+                            window_end=win.end.isoformat(),
+                            symbol=self.symbol,
+                            mode=MODE,
+                        )
+                        return {
+                            "action": "event_blackout",
+                            "equity": self.equity,
+                            "proba": proba,
+                            "event": win.event.name,
+                            "window_start": win.start.isoformat(),
+                            "window_end": win.end.isoformat(),
+                        }
                 action = await self._open_long(close)
                 return {"action": action, "equity": self.equity, "proba": proba}
             return {"action": "hold", "equity": self.equity, "proba": proba}
@@ -614,6 +643,7 @@ async def run_testnet_live(
     risk_limits: RiskLimits,
     seconds: int,
     restore_state: bool = True,
+    event_blackout: EventBlackoutGuard | None = None,
 ) -> dict[str, Any]:
     history = await load_klines_df(
         database_url, symbol=cfg.symbol, interval=cfg.interval
@@ -638,6 +668,7 @@ async def run_testnet_live(
         ws_base_url=ws_base_url,
         history=history,
         publisher=publisher,
+        event_blackout=event_blackout,
     )
     if restore_state:
         trader.load_state()

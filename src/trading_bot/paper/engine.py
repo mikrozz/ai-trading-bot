@@ -17,7 +17,9 @@ from trading_bot.features.engineering import (
     inject_live_orderbook,
 )
 from trading_bot.logging_setup import get_logger
+from trading_bot.metrics import EVENT_BLACKOUT
 from trading_bot.ml.train_xgb import load_model
+from trading_bot.risk.event_blackout import EventBlackoutGuard
 from trading_bot.risk.gates import HardRiskGate, RiskDecision, RiskLimits, RiskState
 
 log = get_logger(__name__)
@@ -68,6 +70,7 @@ class PaperEngine:
         min_hold_bars: int = 6,
         cooldown_bars: int = 3,
         risk_limits: RiskLimits | None = None,
+        event_blackout: EventBlackoutGuard | None = None,
     ) -> None:
         payload = load_model(model_path)
         self.model = payload["model"]
@@ -81,6 +84,7 @@ class PaperEngine:
         self.cooldown_bars = max(0, int(cooldown_bars))
         self.bars_in_position = 0
         self.bars_since_close = self.cooldown_bars  # сразу можно открыть
+        self.event_blackout = event_blackout
         self.risk_gate = HardRiskGate(risk_limits or RiskLimits())
         self.state = PaperState(cash=initial_cash, equity=initial_cash)
         self.risk_state = RiskState(
@@ -136,6 +140,30 @@ class PaperEngine:
                         "proba": proba,
                         "equity": self.state.equity,
                     }
+                if self.event_blackout is not None:
+                    win = self.event_blackout.should_block_open(ts)
+                    if win is not None:
+                        EVENT_BLACKOUT.labels(
+                            symbol=self.symbol, event=win.event.name, mode="paper"
+                        ).inc()
+                        log.info(
+                            "event_blackout",
+                            event=win.event.name,
+                            event_at=win.event.at_utc.isoformat(),
+                            window_start=win.start.isoformat(),
+                            window_end=win.end.isoformat(),
+                            symbol=self.symbol,
+                            mode="paper",
+                        )
+                        self._update_equity(close)
+                        return {
+                            "action": "event_blackout",
+                            "proba": proba,
+                            "equity": self.state.equity,
+                            "event": win.event.name,
+                            "window_start": win.start.isoformat(),
+                            "window_end": win.end.isoformat(),
+                        }
                 self._open_position(close, ts)
                 return {"action": "open", "proba": proba, "equity": self.state.equity}
             self._update_equity(close)

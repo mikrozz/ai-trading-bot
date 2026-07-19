@@ -16,3 +16,6 @@ def test_default_yaml_loads() -> None:
     assert settings.paper.cooldown_bars == 3
     assert settings.live_testnet.position_fraction == 0.05
     assert settings.live_testnet.max_orders_per_hour == 20
+    assert settings.events.enabled is True
+    assert settings.events.minutes_before == 30
+    assert settings.events.minutes_after == 60
