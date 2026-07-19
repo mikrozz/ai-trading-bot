@@ -32,17 +32,19 @@ class BinanceSpotClient(SpotExchange):
         base_url: str = "https://testnet.binance.vision",
         session: aiohttp.ClientSession | None = None,
         recv_window: int = 5000,
+        timeout_sec: float = 30.0,
     ) -> None:
         self.api_key = api_key
         self.api_secret = api_secret
         self.base_url = base_url.rstrip("/")
         self.recv_window = recv_window
+        self.timeout_sec = timeout_sec
         self._session = session
         self._owns_session = session is None
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=30)
+            timeout = aiohttp.ClientTimeout(total=self.timeout_sec)
             self._session = aiohttp.ClientSession(timeout=timeout)
             self._owns_session = True
         return self._session

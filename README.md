@@ -10,9 +10,11 @@
 - WS ingest → Redis Streams → batch writer → TimescaleDB
 - Feature engineering (24 признака на klines)
 - Historical bootstrap klines → TimescaleDB
-- XGBoost walk-forward train + paper backfill
+- XGBoost walk-forward train + paper backfill / live paper
+- Orderbook (bookTicker) features + sampled storage
+- Testnet soak (LIMIT far + cancel)
 - Docker Compose: Redis + TimescaleDB
-- CLI: `smoke`, `ingest`, `writer`, `pipeline`, `features`, `bootstrap`, `train`, `paper`
+- CLI: `smoke`, `ingest`, `writer`, `pipeline`, `features`, `bootstrap`, `train`, `paper`, `paper-live`, `soak`
 
 ## Секреты
 
@@ -47,6 +49,8 @@ trading-bot pipeline --seconds 20   # ingest + writer E2E
 trading-bot bootstrap --months 6 --interval 5m
 trading-bot train --symbol BTCUSDT --interval 5m
 trading-bot paper --symbol BTCUSDT --model data/models/xgb_btc_5m.joblib
+trading-bot paper-live --seconds 120 --symbol BTCUSDT
+trading-bot soak --cycles 3 --symbol BTCUSDT
 ```
 
 > `train`/`paper` — research tools. Sharpe/PnL не являются критерием приёмки MVP.

@@ -67,6 +67,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     paper.add_argument("--cash", type=float, default=1000.0)
 
+    live = sub.add_parser("paper-live", help="Live paper на WS (закрытые klines)")
+    live.add_argument("--symbol", default="BTCUSDT")
+    live.add_argument("--interval", default="5m")
+    live.add_argument(
+        "--model",
+        type=Path,
+        default=Path("data/models/xgb_btc_5m.joblib"),
+    )
+    live.add_argument("--cash", type=float, default=1000.0)
+    live.add_argument("--seconds", type=int, default=120)
+    live.add_argument("--no-redis", action="store_true")
+
+    soak = sub.add_parser("soak", help="Testnet soak: LIMIT far + cancel")
+    soak.add_argument("--symbol", default="BTCUSDT")
+    soak.add_argument("--cycles", type=int, default=3)
+    soak.add_argument("--pause", type=float, default=1.0)
+
     risk = sub.add_parser("risk-demo", help="Демо hard risk gate")
     risk.add_argument("--equity", type=float, default=1000.0)
     risk.add_argument("--notional", type=float, default=50.0)
@@ -179,9 +196,11 @@ async def cmd_writer(config: Path | None, env_file: Path | None, seconds: int) -
     )
     print(
         f"WRITER_OK trades={writer.written_trades} "
-        f"klines={writer.written_klines} errors={writer.errors}"
+        f"klines={writer.written_klines} books={writer.written_books} "
+        f"errors={writer.errors}"
     )
-    return 0 if writer.errors == 0 and (writer.written_trades + writer.written_klines) > 0 else 1
+    written = writer.written_trades + writer.written_klines + writer.written_books
+    return 0 if writer.errors == 0 and written > 0 else 1
 
 
 async def cmd_pipeline(config: Path | None, env_file: Path | None, seconds: int) -> int:
@@ -229,9 +248,11 @@ async def cmd_pipeline(config: Path | None, env_file: Path | None, seconds: int)
     )
     print(
         f"PIPELINE_OK messages={ingest.messages_ok} "
-        f"trades={writer.written_trades} klines={writer.written_klines}"
+        f"trades={writer.written_trades} klines={writer.written_klines} "
+        f"books={writer.written_books}"
     )
-    ok = ingest.messages_ok > 0 and (writer.written_trades + writer.written_klines) > 0
+    written = writer.written_trades + writer.written_klines + writer.written_books
+    ok = ingest.messages_ok > 0 and written > 0
     return 0 if ok and writer.errors == 0 else 1
 
 
@@ -414,6 +435,95 @@ async def cmd_paper(
     return 0
 
 
+async def cmd_paper_live(
+    config: Path | None,
+    env_file: Path | None,
+    symbol: str,
+    interval: str,
+    model_path: Path,
+    cash: float,
+    seconds: int,
+    no_redis: bool,
+) -> int:
+    from trading_bot.paper.live import run_live_paper
+
+    settings = build_settings(config, env_file)
+    setup_logging(settings.log_level)
+    log = get_logger("paper_live")
+    if not model_path.exists():
+        print(f"PAPER_LIVE_FAIL model not found: {model_path}")
+        return 1
+    summary = await run_live_paper(
+        database_url=settings.database_url,
+        ws_base_url=settings.market_ws_base(),
+        redis_url=None if no_redis else settings.redis_url,
+        model_path=model_path,
+        symbol=symbol,
+        interval=interval,
+        cash=cash,
+        seconds=seconds,
+        fee_rate=settings.fees_taker,
+        slippage=settings.slippage_liquid,
+        risk_limits=RiskLimits(
+            daily_drawdown_limit=settings.risk.daily_drawdown_limit,
+            weekly_drawdown_limit=settings.risk.weekly_drawdown_limit,
+            max_position_fraction=settings.risk.max_position_fraction,
+            max_open_positions=settings.risk.max_open_positions,
+            stop_loss=settings.risk.stop_loss,
+            listing_ban_minutes=settings.risk.listing_ban_minutes,
+        ),
+    )
+    log.info("paper_live_done", **summary)
+    print(
+        f"PAPER_LIVE_OK closed_bars={summary['closed_bars']} "
+        f"equity={summary['equity']:.2f} fills={summary['fills']} "
+        f"book_updates={summary['book_updates']} ws_msg={summary['messages_ok']}"
+    )
+    # успех: WS жив; closed_bars может быть 0 на коротком окне 5m
+    return 0 if summary["messages_ok"] > 0 else 1
+
+
+async def cmd_soak(
+    config: Path | None,
+    env_file: Path | None,
+    symbol: str,
+    cycles: int,
+    pause: float,
+) -> int:
+    from trading_bot.execution.soak import run_soak
+
+    settings = build_settings(config, env_file)
+    setup_logging(settings.log_level)
+    log = get_logger("soak")
+    settings.require_trading_credentials()
+    client = BinanceSpotClient(
+        api_key=settings.binance_api_key,
+        api_secret=settings.binance_api_secret,
+        base_url=settings.binance_base_url,
+        timeout_sec=60.0,
+    )
+    try:
+        result = await run_soak(
+            client, symbol=symbol, cycles=cycles, pause_sec=pause
+        )
+    finally:
+        await client.close()
+    log.info(
+        "soak_done",
+        placed=result.placed,
+        cancelled=result.cancelled,
+        errors=result.errors,
+        last_error=result.last_error,
+    )
+    ok = result.errors == 0 and result.placed >= cycles and result.cancelled >= cycles
+    tag = "SOAK_OK" if ok else "SOAK_FAIL"
+    print(
+        f"{tag} placed={result.placed} cancelled={result.cancelled} "
+        f"errors={result.errors} orders={result.order_ids}"
+    )
+    return 0 if ok else 1
+
+
 def cmd_risk_demo(equity: float, notional: float) -> int:
     setup_logging("INFO", json_logs=False)
     gate = HardRiskGate(RiskLimits())
@@ -507,6 +617,35 @@ def main(argv: list[str] | None = None) -> None:
                     args.interval,
                     args.model,
                     args.cash,
+                )
+            )
+        )
+
+    if args.command == "paper-live":
+        raise SystemExit(
+            asyncio.run(
+                cmd_paper_live(
+                    args.config,
+                    args.env_file,
+                    args.symbol,
+                    args.interval,
+                    args.model,
+                    args.cash,
+                    args.seconds,
+                    args.no_redis,
+                )
+            )
+        )
+
+    if args.command == "soak":
+        raise SystemExit(
+            asyncio.run(
+                cmd_soak(
+                    args.config,
+                    args.env_file,
+                    args.symbol,
+                    args.cycles,
+                    args.pause,
                 )
             )
         )

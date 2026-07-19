@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import asyncpg
 from redis.asyncio import Redis
 
+from trading_bot.features.orderbook import book_ticker_from_payload, orderbook_feature_dict
 from trading_bot.logging_setup import get_logger
 
 log = get_logger(__name__)
@@ -58,19 +59,36 @@ class KlineRow:
 
 
 @dataclass
+class BookTickerRow:
+    ts: datetime
+    symbol: str
+    bid_price: float
+    bid_qty: float
+    ask_price: float
+    ask_qty: float
+    spread_bps: float
+    imbalance: float
+    microprice: float
+
+
+@dataclass
 class WriteBuffers:
     trades: list[TradeRow] = field(default_factory=list)
     klines: list[KlineRow] = field(default_factory=list)
+    books: list[BookTickerRow] = field(default_factory=list)
 
     def clear(self) -> None:
         self.trades.clear()
         self.klines.clear()
+        self.books.clear()
 
     def __len__(self) -> int:
-        return len(self.trades) + len(self.klines)
+        return len(self.trades) + len(self.klines) + len(self.books)
 
 
-def parse_event(event_type: str, payload: dict[str, Any]) -> TradeRow | KlineRow | None:
+def parse_event(
+    event_type: str, payload: dict[str, Any]
+) -> TradeRow | KlineRow | BookTickerRow | None:
     """Преобразует Binance WS payload в строку БД."""
     et = event_type
     if et in {"trade", "aggTrade"} or payload.get("e") in {"trade", "aggTrade"}:
@@ -101,6 +119,28 @@ def parse_event(event_type: str, payload: dict[str, Any]) -> TradeRow | KlineRow
             close=float(k["c"]),
             volume=float(k["v"]),
         )
+
+    if "bookTicker" in str(event_type) or (
+        "b" in payload and "a" in payload and "B" in payload and "A" in payload
+    ):
+        book = book_ticker_from_payload(payload)
+        if book is None:
+            return None
+        feats = orderbook_feature_dict(book)
+        ts_ms = book.event_time_ms or int(payload.get("E") or 0)
+        if ts_ms <= 0:
+            ts_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        return BookTickerRow(
+            ts=_ms_to_dt(ts_ms),
+            symbol=book.symbol,
+            bid_price=book.bid_price,
+            bid_qty=book.bid_qty,
+            ask_price=book.ask_price,
+            ask_qty=book.ask_qty,
+            spread_bps=feats["ob_spread_bps"],
+            imbalance=feats["ob_imbalance"],
+            microprice=feats["ob_microprice"],
+        )
     return None
 
 
@@ -127,7 +167,10 @@ class BatchWriter:
         self._pool: asyncpg.Pool | None = None
         self.written_trades = 0
         self.written_klines = 0
+        self.written_books = 0
         self.errors = 0
+        # bookTicker очень частый — сэмплируем ~1/sec на символ в буфере
+        self._last_book_flush_ms: dict[str, int] = {}
 
     async def start(self) -> None:
         self._pool = await asyncpg.create_pool(**parse_database_url(self.database_url), min_size=1, max_size=4)
@@ -185,6 +228,30 @@ class BatchWriter:
                         ],
                     )
                     self.written_klines += len(buf.klines)
+                if buf.books:
+                    await conn.executemany(
+                        """
+                        INSERT INTO md_book_ticker
+                          (ts, symbol, bid_price, bid_qty, ask_price, ask_qty,
+                           spread_bps, imbalance, microprice)
+                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                        """,
+                        [
+                            (
+                                b.ts,
+                                b.symbol,
+                                b.bid_price,
+                                b.bid_qty,
+                                b.ask_price,
+                                b.ask_qty,
+                                b.spread_bps,
+                                b.imbalance,
+                                b.microprice,
+                            )
+                            for b in buf.books
+                        ],
+                    )
+                    self.written_books += len(buf.books)
         buf.clear()
 
     async def run(self, *, max_seconds: float | None = None) -> None:
@@ -223,6 +290,12 @@ class BatchWriter:
                                     buf.trades.append(row)
                                 elif isinstance(row, KlineRow):
                                     buf.klines.append(row)
+                                elif isinstance(row, BookTickerRow):
+                                    ms = int(row.ts.timestamp() * 1000)
+                                    prev = self._last_book_flush_ms.get(row.symbol, 0)
+                                    if ms - prev >= 1000:
+                                        self._last_book_flush_ms[row.symbol] = ms
+                                        buf.books.append(row)
                             except Exception as exc:
                                 self.errors += 1
                                 log.warning("parse_error", error=str(exc))
@@ -250,5 +323,6 @@ class BatchWriter:
             "writer_done",
             trades=self.written_trades,
             klines=self.written_klines,
+            books=self.written_books,
             errors=self.errors,
         )
