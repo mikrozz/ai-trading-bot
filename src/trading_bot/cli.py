@@ -429,7 +429,7 @@ async def cmd_train(
     folds: int,
     model_out: Path,
 ) -> int:
-    from trading_bot.ml.dataset import load_klines_df
+    from trading_bot.ml.dataset import load_book_ticker_df, load_klines_df
     from trading_bot.ml.train_xgb import train_walk_forward
 
     settings = build_settings(config, env_file)
@@ -439,8 +439,10 @@ async def cmd_train(
     if df.empty:
         print("TRAIN_FAIL empty dataset — сначала trading-bot bootstrap")
         return 1
+    books = await load_book_ticker_df(settings.database_url, symbol=symbol)
+    log.info("train_dataset", klines=len(df), book_rows=len(books))
     _model, result = train_walk_forward(
-        df, n_folds=folds, model_out=model_out, min_train_rows=400
+        df, books=books, n_folds=folds, model_out=model_out, min_train_rows=400
     )
     log.info(
         "train_done",
@@ -484,6 +486,10 @@ async def cmd_paper(
         initial_cash=cash,
         fee_rate=settings.fees_taker,
         slippage=settings.slippage_liquid,
+        prob_threshold=settings.paper.prob_threshold,
+        min_hold_bars=settings.paper.min_hold_bars,
+        cooldown_bars=settings.paper.cooldown_bars,
+        position_fraction=settings.paper.position_fraction,
         risk_limits=RiskLimits(
             daily_drawdown_limit=settings.risk.daily_drawdown_limit,
             weekly_drawdown_limit=settings.risk.weekly_drawdown_limit,
@@ -539,6 +545,10 @@ async def cmd_paper_live(
         seconds=seconds,
         fee_rate=settings.fees_taker,
         slippage=settings.slippage_liquid,
+        prob_threshold=settings.paper.prob_threshold,
+        min_hold_bars=settings.paper.min_hold_bars,
+        cooldown_bars=settings.paper.cooldown_bars,
+        position_fraction=settings.paper.position_fraction,
         risk_limits=RiskLimits(
             daily_drawdown_limit=settings.risk.daily_drawdown_limit,
             weekly_drawdown_limit=settings.risk.weekly_drawdown_limit,
@@ -589,14 +599,20 @@ async def cmd_soak(
         "soak_done",
         placed=result.placed,
         cancelled=result.cancelled,
+        synced_ok=result.synced_ok,
         errors=result.errors,
         last_error=result.last_error,
     )
-    ok = result.errors == 0 and result.placed >= cycles and result.cancelled >= cycles
+    ok = (
+        result.errors == 0
+        and result.placed >= cycles
+        and result.cancelled >= cycles
+        and result.synced_ok >= cycles * 2
+    )
     tag = "SOAK_OK" if ok else "SOAK_FAIL"
     print(
         f"{tag} placed={result.placed} cancelled={result.cancelled} "
-        f"errors={result.errors} orders={result.order_ids}"
+        f"synced_ok={result.synced_ok} errors={result.errors} orders={result.order_ids}"
     )
     return 0 if ok else 1
 

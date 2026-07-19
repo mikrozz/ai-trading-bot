@@ -1,4 +1,4 @@
-"""Feature engineering на klines (MVP: 15+ признаков без orderbook)."""
+"""Feature engineering: klines + orderbook (bookTicker)."""
 
 from __future__ import annotations
 
@@ -123,6 +123,14 @@ def build_feature_frame(klines: pd.DataFrame, builder: FeatureBuilder | None = N
     return df
 
 
+ORDERBOOK_FEATURE_COLUMNS = [
+    "ob_spread_bps",
+    "ob_imbalance",
+    "ob_microprice_premium",  # (microprice - close) / close
+    "ob_bid_qty",
+    "ob_ask_qty",
+]
+
 FEATURE_COLUMNS = [
     "log_return",
     "simple_return",
@@ -148,4 +156,78 @@ FEATURE_COLUMNS = [
     "session_asia",
     "session_eu",
     "session_us",
+    *ORDERBOOK_FEATURE_COLUMNS,
 ]
+
+
+def attach_orderbook_features(
+    klines: pd.DataFrame,
+    books: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """
+    Присоединяет bookTicker к барам kline (asof backward).
+    books: ts, bid_price, bid_qty, ask_price, ask_qty [, spread_bps, imbalance, microprice]
+    Если books пуст — заполняет OB нулями (совместимость со старой историей).
+    """
+    df = klines.copy()
+    if books is None or books.empty or "ts" not in df.columns:
+        for col in ORDERBOOK_FEATURE_COLUMNS:
+            df[col] = 0.0
+        return df
+
+    b = books.copy()
+    b["ts"] = pd.to_datetime(b["ts"], utc=True)
+    b = b.sort_values("ts")
+    if "spread_bps" not in b.columns:
+        mid = (b["bid_price"] + b["ask_price"]) / 2.0
+        b["spread_bps"] = ((b["ask_price"] - b["bid_price"]) / mid.replace(0, np.nan)) * 10_000.0
+    if "imbalance" not in b.columns:
+        denom = b["bid_qty"] + b["ask_qty"]
+        b["imbalance"] = (b["bid_qty"] - b["ask_qty"]) / denom.replace(0, np.nan)
+    if "microprice" not in b.columns:
+        denom = b["bid_qty"] + b["ask_qty"]
+        b["microprice"] = (
+            b["ask_price"] * b["bid_qty"] + b["bid_price"] * b["ask_qty"]
+        ) / denom.replace(0, np.nan)
+
+    drop_cols = [c for c in ORDERBOOK_FEATURE_COLUMNS + ["microprice"] if c in df.columns]
+    left = df.drop(columns=drop_cols, errors="ignore").sort_values("ts").reset_index(drop=True)
+    right = b[["ts", "spread_bps", "imbalance", "microprice", "bid_qty", "ask_qty"]].rename(
+        columns={
+            "spread_bps": "ob_spread_bps",
+            "imbalance": "ob_imbalance",
+            "bid_qty": "ob_bid_qty",
+            "ask_qty": "ob_ask_qty",
+        }
+    )
+    merged = pd.merge_asof(left, right, on="ts", direction="backward")
+    close = pd.to_numeric(merged["close"], errors="coerce")
+    micro = pd.to_numeric(merged["microprice"], errors="coerce")
+    merged["ob_microprice_premium"] = (micro - close) / close.replace(0, np.nan)
+    for col in ORDERBOOK_FEATURE_COLUMNS:
+        merged[col] = pd.to_numeric(merged[col], errors="coerce").fillna(0.0)
+    if "microprice" in merged.columns:
+        merged = merged.drop(columns=["microprice"])
+    return merged
+
+
+def inject_live_orderbook(
+    feats_row: pd.DataFrame,
+    *,
+    close: float,
+    spread_bps: float,
+    imbalance: float,
+    microprice: float,
+    bid_qty: float,
+    ask_qty: float,
+) -> pd.DataFrame:
+    """Подставляет текущий стакан в последнюю строку фич (live inference)."""
+    out = feats_row.copy()
+    out["ob_spread_bps"] = float(spread_bps)
+    out["ob_imbalance"] = float(imbalance)
+    out["ob_bid_qty"] = float(bid_qty)
+    out["ob_ask_qty"] = float(ask_qty)
+    prem = 0.0 if close <= 0 else (float(microprice) - float(close)) / float(close)
+    out["ob_microprice_premium"] = prem
+    return out
+

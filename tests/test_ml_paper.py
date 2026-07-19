@@ -49,7 +49,34 @@ def test_train_and_paper(tmp_path: Path) -> None:
         symbol="BTCUSDT",
         initial_cash=1000.0,
         prob_threshold=0.5,
+        min_hold_bars=3,
+        cooldown_bars=2,
     )
     state = engine.run_backfill(df)
     assert state.bars_seen > 0
     assert state.equity > 0
+
+
+def test_min_hold_reduces_churn(tmp_path: Path) -> None:
+    df = _synth_klines(800)
+    model_path = tmp_path / "m2.joblib"
+    train_walk_forward(df, n_folds=3, min_train_rows=150, model_out=model_path)
+    aggressive = PaperEngine(
+        model_path=model_path,
+        symbol="BTCUSDT",
+        initial_cash=1000.0,
+        prob_threshold=0.45,
+        min_hold_bars=1,
+        cooldown_bars=0,
+    )
+    calm = PaperEngine(
+        model_path=model_path,
+        symbol="BTCUSDT",
+        initial_cash=1000.0,
+        prob_threshold=0.45,
+        min_hold_bars=12,
+        cooldown_bars=6,
+    )
+    a = aggressive.run_backfill(df.copy())
+    c = calm.run_backfill(df.copy())
+    assert len(c.fills) <= len(a.fills)

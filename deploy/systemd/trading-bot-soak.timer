@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic Binance testnet soak for AI Trading Bot
+
+[Timer]
+OnCalendar=*-*-* 00/6:20:00
+Persistent=true
+RandomizedDelaySec=3m
+
+[Install]
+WantedBy=timers.target

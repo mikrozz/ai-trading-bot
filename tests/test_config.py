@@ -11,3 +11,6 @@ def test_default_yaml_loads() -> None:
     assert settings.exchange == "binance_spot"
     assert "BTCUSDT" in settings.symbols
     assert settings.risk.daily_drawdown_limit == 0.05
+    assert settings.paper.prob_threshold == 0.60
+    assert settings.paper.min_hold_bars == 6
+    assert settings.paper.cooldown_bars == 3

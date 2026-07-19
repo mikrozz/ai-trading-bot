@@ -10,7 +10,12 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from trading_bot.features.engineering import build_feature_frame
+from trading_bot.features.engineering import (
+    ORDERBOOK_FEATURE_COLUMNS,
+    attach_orderbook_features,
+    build_feature_frame,
+    inject_live_orderbook,
+)
 from trading_bot.logging_setup import get_logger
 from trading_bot.ml.train_xgb import load_model
 from trading_bot.risk.gates import HardRiskGate, RiskDecision, RiskLimits, RiskState
@@ -59,7 +64,9 @@ class PaperEngine:
         position_fraction: float = 0.10,
         fee_rate: float = 0.001,
         slippage: float = 0.0005,
-        prob_threshold: float = 0.55,
+        prob_threshold: float = 0.60,
+        min_hold_bars: int = 6,
+        cooldown_bars: int = 3,
         risk_limits: RiskLimits | None = None,
     ) -> None:
         payload = load_model(model_path)
@@ -70,6 +77,10 @@ class PaperEngine:
         self.slippage = slippage
         self.prob_threshold = prob_threshold
         self.position_fraction = position_fraction
+        self.min_hold_bars = max(1, int(min_hold_bars))
+        self.cooldown_bars = max(0, int(cooldown_bars))
+        self.bars_in_position = 0
+        self.bars_since_close = self.cooldown_bars  # сразу можно открыть
         self.risk_gate = HardRiskGate(risk_limits or RiskLimits())
         self.state = PaperState(cash=initial_cash, equity=initial_cash)
         self.risk_state = RiskState(
@@ -101,10 +112,50 @@ class PaperEngine:
         self.state.cash += proceeds - fee
         self.state.fills.append(PaperFill(ts, pos.symbol, "SELL", pos.qty, px, fee, reason))
         self.state.position = None
+        self.bars_in_position = 0
+        self.bars_since_close = 0
         self.risk_state.open_positions = 0
         self.risk_state.position_notionals.pop(pos.symbol, None)
         self._update_equity(close)
         log.debug("paper_close", reason=reason, price=px, equity=self.state.equity)
+
+    def _apply_signal(self, close: float, ts: datetime, proba: float) -> dict[str, Any]:
+        """Вход/выход с учётом min_hold и cooldown (снижает turnover)."""
+        if self.state.position is not None:
+            self.bars_in_position += 1
+        else:
+            self.bars_since_close += 1
+
+        if proba >= self.prob_threshold:
+            self.state.signals_long += 1
+            if self.state.position is None:
+                if self.bars_since_close < self.cooldown_bars:
+                    self._update_equity(close)
+                    return {
+                        "action": "cooldown",
+                        "proba": proba,
+                        "equity": self.state.equity,
+                    }
+                self._open_position(close, ts)
+                return {"action": "open", "proba": proba, "equity": self.state.equity}
+            self._update_equity(close)
+            return {"action": "hold", "proba": proba, "equity": self.state.equity}
+
+        self.state.signals_flat += 1
+        if self.state.position is not None:
+            if self.bars_in_position < self.min_hold_bars:
+                self._update_equity(close)
+                return {
+                    "action": "min_hold",
+                    "proba": proba,
+                    "equity": self.state.equity,
+                    "bars_in_position": self.bars_in_position,
+                }
+            self._close_position(close, ts, "model_flat")
+            return {"action": "close", "proba": proba, "equity": self.state.equity}
+
+        self._update_equity(close)
+        return {"action": "hold", "proba": proba, "equity": self.state.equity}
 
     def _open_position(self, close: float, ts: datetime) -> None:
         if self.state.position is not None:
@@ -137,22 +188,46 @@ class PaperEngine:
             notional=notional,
         )
         self.state.fills.append(PaperFill(ts, self.symbol, "BUY", qty, px, fee, "model_long"))
+        self.bars_in_position = 0
         self.risk_state.open_positions = 1
         self.risk_state.position_notionals[self.symbol] = notional
         self._update_equity(close)
         log.debug("paper_open", price=px, qty=qty, equity=self.state.equity)
 
-    def on_bar(self, history: pd.DataFrame) -> dict[str, Any]:
-        """Один бар (live path): фичи по хвосту истории."""
+    def on_bar(
+        self,
+        history: pd.DataFrame,
+        *,
+        orderbook: dict[str, float] | None = None,
+    ) -> dict[str, Any]:
+        """Один бар (live path): фичи по хвосту истории + опциональный стакан."""
         self.state.bars_seen += 1
         feats = build_feature_frame(history)
-        row = feats.iloc[[-1]]
+        for col in ORDERBOOK_FEATURE_COLUMNS:
+            if col not in feats.columns:
+                feats[col] = 0.0
+        row = feats.iloc[[-1]].copy()
         close = float(history.iloc[-1]["close"])
         ts = pd.Timestamp(history.iloc[-1]["ts"]).to_pydatetime()
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
 
-        if row[self.feature_names].isna().any(axis=None):
+        if orderbook:
+            row = inject_live_orderbook(
+                row,
+                close=close,
+                spread_bps=float(orderbook.get("ob_spread_bps", 0.0)),
+                imbalance=float(orderbook.get("ob_imbalance", 0.0)),
+                microprice=float(orderbook.get("ob_microprice", close)),
+                bid_qty=float(orderbook.get("ob_bid_qty", 0.0)),
+                ask_qty=float(orderbook.get("ob_ask_qty", 0.0)),
+            )
+
+        needed = [c for c in self.feature_names if c in row.columns]
+        missing_cols = [c for c in self.feature_names if c not in row.columns]
+        for col in missing_cols:
+            row[col] = 0.0
+        if row[needed].isna().any(axis=None):
             self._update_equity(close)
             return {"action": "warmup", "equity": self.state.equity}
 
@@ -173,26 +248,22 @@ class PaperEngine:
             return {"action": "kill", "reason": kill.reason, "equity": self.state.equity}
 
         proba = float(self.model.predict_proba(row[self.feature_names])[0][1])
-        if proba >= self.prob_threshold:
-            self.state.signals_long += 1
-            if self.state.position is None:
-                self._open_position(close, ts)
-                return {"action": "open", "proba": proba, "equity": self.state.equity}
-        else:
-            self.state.signals_flat += 1
-            if self.state.position is not None:
-                self._close_position(close, ts, "model_flat")
-                return {"action": "close", "proba": proba, "equity": self.state.equity}
+        return self._apply_signal(close, ts, proba)
 
-        self._update_equity(close)
-        return {"action": "hold", "proba": proba, "equity": self.state.equity}
-
-    def run_backfill(self, klines: pd.DataFrame) -> PaperState:
+    def run_backfill(
+        self,
+        klines: pd.DataFrame,
+        books: pd.DataFrame | None = None,
+    ) -> PaperState:
         """Прогон paper по истории: фичи один раз + batch predict."""
         if len(klines) < 50:
             raise ValueError("Need >=50 bars for paper backfill")
 
-        feats = build_feature_frame(klines.reset_index(drop=True))
+        enriched = attach_orderbook_features(klines.reset_index(drop=True), books)
+        feats = build_feature_frame(enriched)
+        for col in self.feature_names:
+            if col not in feats.columns:
+                feats[col] = 0.0
         start_i = 40
         x_all = feats.iloc[start_i:][self.feature_names]
         valid = ~x_all.isna().any(axis=1)
@@ -229,18 +300,7 @@ class PaperEngine:
                 continue
 
             proba = float(proba_all[offset])
-            if proba >= self.prob_threshold:
-                self.state.signals_long += 1
-                if self.state.position is None:
-                    self._open_position(close, ts)
-                else:
-                    self._update_equity(close)
-            else:
-                self.state.signals_flat += 1
-                if self.state.position is not None:
-                    self._close_position(close, ts, "model_flat")
-                else:
-                    self._update_equity(close)
+            self._apply_signal(close, ts, proba)
 
         last = feats.iloc[-1]
         ts = pd.Timestamp(last["ts"]).to_pydatetime()

@@ -38,6 +38,11 @@ PAPER_EQUITY = Gauge(
     "Current paper equity",
     ["symbol"],
 )
+PAPER_KILL_SWITCH = Gauge(
+    "trading_paper_kill_switch",
+    "Paper kill-switch active (1=on)",
+    ["symbol"],
+)
 PAPER_FILLS = Counter(
     "trading_paper_fills_total",
     "Paper fills",

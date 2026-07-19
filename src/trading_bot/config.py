@@ -32,6 +32,13 @@ class RiskConfig(BaseSettings):
     listing_ban_minutes: int = 5
 
 
+class PaperConfig(BaseSettings):
+    prob_threshold: float = 0.60
+    min_hold_bars: int = 6
+    cooldown_bars: int = 3
+    position_fraction: float = 0.10
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file_encoding="utf-8",
@@ -59,6 +66,7 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
     risk: RiskConfig = Field(default_factory=RiskConfig)
+    paper: PaperConfig = Field(default_factory=PaperConfig)
 
     fees_maker: float = 0.001
     fees_taker: float = 0.001
@@ -126,6 +134,7 @@ def build_settings(
         yaml_data = load_yaml_config(config_path)
 
     risk_raw = yaml_data.pop("risk", {}) or {}
+    paper_raw = yaml_data.pop("paper", {}) or {}
     fees = yaml_data.pop("fees", {}) or {}
     slippage = yaml_data.pop("slippage", {}) or {}
     yaml_data.pop("ingest", None)
@@ -148,4 +157,6 @@ def build_settings(
     settings = Settings(**flat)
     if risk_raw:
         settings.risk = RiskConfig(**risk_raw)
+    if paper_raw:
+        settings.paper = PaperConfig(**paper_raw)
     return settings

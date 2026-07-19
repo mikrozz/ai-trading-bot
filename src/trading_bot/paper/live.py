@@ -15,7 +15,7 @@ from trading_bot.features.orderbook import orderbook_feature_dict
 from trading_bot.logging_setup import get_logger
 from trading_bot.marketdata.book_state import BookStateStore
 from trading_bot.marketdata.ws_ingest import BinanceWsIngest
-from trading_bot.metrics import BOOK_UPDATES, PAPER_EQUITY, PAPER_FILLS
+from trading_bot.metrics import BOOK_UPDATES, PAPER_EQUITY, PAPER_FILLS, PAPER_KILL_SWITCH
 from trading_bot.ml.dataset import load_klines_df
 from trading_bot.paper.engine import PaperEngine, PaperPosition
 from trading_bot.risk.gates import RiskLimits
@@ -88,6 +88,9 @@ def load_paper_state(engine: PaperEngine, path: Path) -> bool:
         engine.risk_state.open_positions = 1
         engine.risk_state.position_notionals[pos["symbol"]] = float(pos["notional"])
     PAPER_EQUITY.labels(symbol=engine.symbol).set(engine.state.equity)
+    PAPER_KILL_SWITCH.labels(symbol=engine.symbol).set(
+        1.0 if engine.risk_state.kill_switch else 0.0
+    )
     log.info("paper_state_loaded", path=str(path), equity=engine.state.equity)
     return True
 
@@ -157,16 +160,19 @@ class LivePaperRunner:
         if len(self.history) > 5000:
             self.history = self.history.iloc[-5000:].reset_index(drop=True)
 
+        book = self.book_store.get(self.symbol)
+        ob = orderbook_feature_dict(book) if book else {}
         fills_before = len(self.engine.state.fills)
-        result = self.engine.on_bar(self.history)
+        result = self.engine.on_bar(self.history, orderbook=ob or None)
         self.closed_bars += 1
         equity = float(result.get("equity") or self.engine.state.equity)
         PAPER_EQUITY.labels(symbol=self.symbol).set(equity)
+        PAPER_KILL_SWITCH.labels(symbol=self.symbol).set(
+            1.0 if self.engine.risk_state.kill_switch else 0.0
+        )
         if len(self.engine.state.fills) > fills_before:
             for fill in self.engine.state.fills[fills_before:]:
                 PAPER_FILLS.labels(symbol=self.symbol, side=fill.side).inc()
-        book = self.book_store.get(self.symbol)
-        ob = orderbook_feature_dict(book) if book else {}
         log.info(
             "live_paper_bar",
             action=result.get("action"),
@@ -230,6 +236,10 @@ async def run_live_paper(
     risk_limits: RiskLimits,
     state_file: Path | None = None,
     restore_state: bool = True,
+    prob_threshold: float = 0.60,
+    min_hold_bars: int = 6,
+    cooldown_bars: int = 3,
+    position_fraction: float = 0.10,
 ) -> dict:
     history = await load_klines_df(database_url, symbol=symbol, interval=interval)
     if len(history) < 100:
@@ -242,6 +252,10 @@ async def run_live_paper(
         initial_cash=cash,
         fee_rate=fee_rate,
         slippage=slippage,
+        prob_threshold=prob_threshold,
+        min_hold_bars=min_hold_bars,
+        cooldown_bars=cooldown_bars,
+        position_fraction=position_fraction,
         risk_limits=risk_limits,
     )
     sf = state_file or _state_path(symbol)

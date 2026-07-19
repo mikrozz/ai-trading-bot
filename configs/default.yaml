@@ -27,6 +27,12 @@ risk:
   stop_loss: 0.02
   listing_ban_minutes: 5
 
+paper:
+  prob_threshold: 0.60
+  min_hold_bars: 6      # 5m × 6 = 30m минимум в позиции
+  cooldown_bars: 3      # пауза после закрытия перед новым входом
+  position_fraction: 0.10
+
 ingest:
   depth_levels: 20
   redis_stream_maxlen: 100000

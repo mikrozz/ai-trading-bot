@@ -1,0 +1,12 @@
+[Unit]
+Description=AI Trading Bot TimescaleDB backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/ai-trading-bot
+ExecStart=/opt/ai-trading-bot/deploy/backup-timescaledb.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

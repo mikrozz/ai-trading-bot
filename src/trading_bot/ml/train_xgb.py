@@ -11,7 +11,11 @@ import pandas as pd
 from sklearn.metrics import accuracy_score, f1_score
 from xgboost import XGBClassifier
 
-from trading_bot.features.engineering import FEATURE_COLUMNS, build_feature_frame
+from trading_bot.features.engineering import (
+    FEATURE_COLUMNS,
+    attach_orderbook_features,
+    build_feature_frame,
+)
 from trading_bot.logging_setup import get_logger
 
 log = get_logger(__name__)
@@ -50,8 +54,12 @@ class WalkForwardResult:
         return float(np.mean([f.f1 for f in self.folds]))
 
 
-def prepare_xy(klines: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, list[str]]:
-    feats = build_feature_frame(klines)
+def prepare_xy(
+    klines: pd.DataFrame,
+    books: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, pd.Series, list[str]]:
+    enriched = attach_orderbook_features(klines, books)
+    feats = build_feature_frame(enriched)
     cols = [c for c in MODEL_FEATURES if c in feats.columns]
     data = feats.dropna(subset=cols + [TARGET_COL]).copy()
     # последняя точка с NaN target уже отброшена dropna
@@ -63,12 +71,13 @@ def prepare_xy(klines: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, list[str]
 def train_walk_forward(
     klines: pd.DataFrame,
     *,
+    books: pd.DataFrame | None = None,
     n_folds: int = 5,
     min_train_rows: int = 500,
     model_out: Path | None = None,
     random_state: int = 42,
 ) -> tuple[XGBClassifier, WalkForwardResult]:
-    x, y, cols = prepare_xy(klines)
+    x, y, cols = prepare_xy(klines, books=books)
     if len(x) < min_train_rows:
         raise ValueError(f"Недостаточно строк после фич: {len(x)} < {min_train_rows}")
 

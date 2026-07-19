@@ -1,0 +1,63 @@
+groups:
+  - name: ai-trading-bot
+    rules:
+      - alert: TradingBotTargetDown
+        expr: up{service="ai-trading-bot"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          telegram: "yes"
+          alert_group: ai-trading-bot
+        annotations:
+          summary: "AI Trading Bot scrape down"
+          description: "Target {{ $labels.instance }} (service=ai-trading-bot) недоступен >2m"
+
+      - alert: TradingBotIngestSilent
+        expr: sum(rate(trading_ws_messages_total{event=~"trade|kline|bookTicker"}[10m])) == 0
+          and on() (up{service="ai-trading-bot",instance=~".*:9108"} == 1)
+        for: 10m
+        labels:
+          severity: critical
+          telegram: "yes"
+          alert_group: ai-trading-bot
+        annotations:
+          summary: "Ingest молчит 10m"
+          description: "Нет WS сообщений (trade/kline/bookTicker) при живом scrape :9108"
+
+      - alert: TradingBotWriterErrors
+        expr: increase(trading_writer_errors_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          telegram: "yes"
+          alert_group: ai-trading-bot
+        annotations:
+          summary: "Batch writer errors"
+          description: "trading_writer_errors_total вырос за 15m ({{ $value }})"
+
+      - alert: TradingBotPaperKillSwitch
+        expr: trading_paper_kill_switch > 0
+        for: 1m
+        labels:
+          severity: critical
+          telegram: "yes"
+          alert_group: ai-trading-bot
+        annotations:
+          summary: "Paper kill-switch активен"
+          description: "symbol={{ $labels.symbol }} — торговля остановлена risk gate"
+
+      - alert: TradingBotPaperEquityDrop
+        expr: |
+          (
+            trading_paper_equity
+            /
+            clamp_min(trading_paper_equity offset 24h, 1e-9)
+          ) < 0.95
+        for: 15m
+        labels:
+          severity: warning
+          telegram: "yes"
+          alert_group: ai-trading-bot
+        annotations:
+          summary: "Paper equity −5% за 24h"
+          description: "symbol={{ $labels.symbol }} ratio={{ $value | printf \"%.3f\" }}"

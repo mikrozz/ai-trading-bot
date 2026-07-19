@@ -101,6 +101,12 @@ class BinanceSpotClient(SpotExchange):
         data = await self._request("GET", "/api/v3/time")
         return int(data["serverTime"])
 
+    async def ticker_price(self, symbol: str) -> float:
+        data = await self._request(
+            "GET", "/api/v3/ticker/price", params={"symbol": symbol.upper()}
+        )
+        return float(data["price"])
+
     async def exchange_info(self, symbol: str | None = None) -> dict[str, Any]:
         params: dict[str, Any] = {}
         if symbol:
@@ -119,6 +125,22 @@ class BinanceSpotClient(SpotExchange):
             params["symbol"] = symbol.upper()
         data = await self._request("GET", "/api/v3/openOrders", params=params, signed=True)
         return list(data)
+
+    async def get_order(
+        self,
+        *,
+        symbol: str,
+        order_id: int | None = None,
+        client_order_id: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"symbol": symbol.upper()}
+        if order_id is not None:
+            params["orderId"] = order_id
+        if client_order_id is not None:
+            params["origClientOrderId"] = client_order_id
+        if order_id is None and client_order_id is None:
+            raise ValueError("order_id или client_order_id обязателен")
+        return await self._request("GET", "/api/v3/order", params=params, signed=True)
 
     async def create_order(
         self,
