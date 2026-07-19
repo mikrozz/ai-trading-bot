@@ -9,8 +9,10 @@
 - Order manager (paper / testnet)
 - WS ingest → Redis Streams → batch writer → TimescaleDB
 - Feature engineering (24 признака на klines)
+- Historical bootstrap klines → TimescaleDB
+- XGBoost walk-forward train + paper backfill
 - Docker Compose: Redis + TimescaleDB
-- CLI: `smoke`, `ingest`, `writer`, `pipeline`, `features`, `risk-demo`
+- CLI: `smoke`, `ingest`, `writer`, `pipeline`, `features`, `bootstrap`, `train`, `paper`
 
 ## Секреты
 
@@ -42,7 +44,12 @@ pytest -q
 ```bash
 docker compose up -d redis timescaledb
 trading-bot pipeline --seconds 20   # ingest + writer E2E
+trading-bot bootstrap --months 6 --interval 5m
+trading-bot train --symbol BTCUSDT --interval 5m
+trading-bot paper --symbol BTCUSDT --model data/models/xgb_btc_5m.joblib
 ```
+
+> `train`/`paper` — research tools. Sharpe/PnL не являются критерием приёмки MVP.
 
 ## Режимы
 

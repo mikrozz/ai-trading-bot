@@ -42,6 +42,31 @@ def build_parser() -> argparse.ArgumentParser:
     features.add_argument("--interval", default="5m")
     features.add_argument("--limit", type=int, default=200)
 
+    bootstrap = sub.add_parser("bootstrap", help="Исторические klines → TimescaleDB")
+    bootstrap.add_argument("--months", type=int, default=6)
+    bootstrap.add_argument("--interval", default="5m")
+    bootstrap.add_argument("--symbols", default=None, help="CSV, иначе из конфига")
+
+    train = sub.add_parser("train", help="Walk-forward XGBoost + сохранить модель")
+    train.add_argument("--symbol", default="BTCUSDT")
+    train.add_argument("--interval", default="5m")
+    train.add_argument("--folds", type=int, default=5)
+    train.add_argument(
+        "--model-out",
+        type=Path,
+        default=Path("data/models/xgb_btc_5m.joblib"),
+    )
+
+    paper = sub.add_parser("paper", help="Paper backfill на истории из БД")
+    paper.add_argument("--symbol", default="BTCUSDT")
+    paper.add_argument("--interval", default="5m")
+    paper.add_argument(
+        "--model",
+        type=Path,
+        default=Path("data/models/xgb_btc_5m.joblib"),
+    )
+    paper.add_argument("--cash", type=float, default=1000.0)
+
     risk = sub.add_parser("risk-demo", help="Демо hard risk gate")
     risk.add_argument("--equity", type=float, default=1000.0)
     risk.add_argument("--notional", type=float, default=50.0)
@@ -267,6 +292,128 @@ async def cmd_features(
     return 0 if len(present) >= 15 else 1
 
 
+async def cmd_bootstrap(
+    config: Path | None,
+    env_file: Path | None,
+    months: int,
+    interval: str,
+    symbols_csv: str | None,
+) -> int:
+    from trading_bot.storage.kline_bootstrap import bootstrap_klines
+
+    settings = build_settings(config, env_file)
+    setup_logging(settings.log_level)
+    log = get_logger("bootstrap")
+    symbols = (
+        [s.strip().upper() for s in symbols_csv.split(",") if s.strip()]
+        if symbols_csv
+        else settings.symbols
+    )
+    client = BinanceSpotClient(base_url=settings.market_rest_base())
+    try:
+        counts = await bootstrap_klines(
+            client=client,
+            database_url=settings.database_url,
+            symbols=symbols,
+            interval=interval,
+            months=months,
+        )
+    finally:
+        await client.close()
+    log.info("bootstrap_done", counts=counts, months=months, interval=interval)
+    total = sum(counts.values())
+    print(f"BOOTSTRAP_OK symbols={counts} total_upserts={total}")
+    return 0 if total > 0 else 1
+
+
+async def cmd_train(
+    config: Path | None,
+    env_file: Path | None,
+    symbol: str,
+    interval: str,
+    folds: int,
+    model_out: Path,
+) -> int:
+    from trading_bot.ml.dataset import load_klines_df
+    from trading_bot.ml.train_xgb import train_walk_forward
+
+    settings = build_settings(config, env_file)
+    setup_logging(settings.log_level)
+    log = get_logger("train")
+    df = await load_klines_df(settings.database_url, symbol=symbol, interval=interval)
+    if df.empty:
+        print("TRAIN_FAIL empty dataset — сначала trading-bot bootstrap")
+        return 1
+    _model, result = train_walk_forward(
+        df, n_folds=folds, model_out=model_out, min_train_rows=400
+    )
+    log.info(
+        "train_done",
+        mean_accuracy=result.mean_accuracy,
+        mean_f1=result.mean_f1,
+        folds=len(result.folds),
+        model=result.model_path,
+    )
+    print(
+        f"TRAIN_OK folds={len(result.folds)} "
+        f"acc={result.mean_accuracy:.4f} f1={result.mean_f1:.4f} "
+        f"model={result.model_path}"
+    )
+    return 0
+
+
+async def cmd_paper(
+    config: Path | None,
+    env_file: Path | None,
+    symbol: str,
+    interval: str,
+    model_path: Path,
+    cash: float,
+) -> int:
+    from trading_bot.ml.dataset import load_klines_df
+    from trading_bot.paper.engine import PaperEngine
+
+    settings = build_settings(config, env_file)
+    setup_logging(settings.log_level)
+    log = get_logger("paper")
+    if not model_path.exists():
+        print(f"PAPER_FAIL model not found: {model_path}")
+        return 1
+    df = await load_klines_df(settings.database_url, symbol=symbol, interval=interval)
+    if len(df) < 100:
+        print("PAPER_FAIL need more klines — bootstrap first")
+        return 1
+    engine = PaperEngine(
+        model_path=model_path,
+        symbol=symbol,
+        initial_cash=cash,
+        fee_rate=settings.fees_taker,
+        slippage=settings.slippage_liquid,
+        risk_limits=RiskLimits(
+            daily_drawdown_limit=settings.risk.daily_drawdown_limit,
+            weekly_drawdown_limit=settings.risk.weekly_drawdown_limit,
+            max_position_fraction=settings.risk.max_position_fraction,
+            max_open_positions=settings.risk.max_open_positions,
+            stop_loss=settings.risk.stop_loss,
+            listing_ban_minutes=settings.risk.listing_ban_minutes,
+        ),
+    )
+    state = engine.run_backfill(df)
+    ret = (state.equity / cash) - 1.0
+    log.info(
+        "paper_done",
+        equity=state.equity,
+        return_pct=ret,
+        fills=len(state.fills),
+        signals_long=state.signals_long,
+    )
+    print(
+        f"PAPER_OK equity={state.equity:.2f} return={ret*100:.2f}% "
+        f"fills={len(state.fills)} long_signals={state.signals_long}"
+    )
+    return 0
+
+
 def cmd_risk_demo(equity: float, notional: float) -> int:
     setup_logging("INFO", json_logs=False)
     gate = HardRiskGate(RiskLimits())
@@ -319,6 +466,47 @@ def main(argv: list[str] | None = None) -> None:
                     args.symbol,
                     args.interval,
                     args.limit,
+                )
+            )
+        )
+
+    if args.command == "bootstrap":
+        raise SystemExit(
+            asyncio.run(
+                cmd_bootstrap(
+                    args.config,
+                    args.env_file,
+                    args.months,
+                    args.interval,
+                    args.symbols,
+                )
+            )
+        )
+
+    if args.command == "train":
+        raise SystemExit(
+            asyncio.run(
+                cmd_train(
+                    args.config,
+                    args.env_file,
+                    args.symbol,
+                    args.interval,
+                    args.folds,
+                    args.model_out,
+                )
+            )
+        )
+
+    if args.command == "paper":
+        raise SystemExit(
+            asyncio.run(
+                cmd_paper(
+                    args.config,
+                    args.env_file,
+                    args.symbol,
+                    args.interval,
+                    args.model,
+                    args.cash,
                 )
             )
         )
