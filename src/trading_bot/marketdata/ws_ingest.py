@@ -11,6 +11,7 @@ import websockets
 from websockets.asyncio.client import ClientConnection
 
 from trading_bot.logging_setup import get_logger
+from trading_bot.metrics import WS_ERRORS, WS_MESSAGES
 from trading_bot.storage.redis_streams import RedisStreamPublisher
 
 log = get_logger(__name__)
@@ -67,9 +68,12 @@ class BinanceWsIngest:
     async def _handle_message(self, raw: str) -> None:
         data = json.loads(raw)
         payload = data.get("data", data)
-        event = payload.get("e") or data.get("stream", "unknown")
-        await self._dispatch(str(event), payload)
+        event = str(payload.get("e") or data.get("stream", "unknown"))
+        symbol = str(payload.get("s") or (payload.get("k") or {}).get("s") or "unknown")
+        await self._dispatch(event, payload)
         self.messages_ok += 1
+        label_event = "bookTicker" if "bookTicker" in event else event.split("@")[-1] if "@" in event else event
+        WS_MESSAGES.labels(symbol=symbol.upper(), event=label_event[:32]).inc()
 
     async def run(self) -> None:
         delay = self.reconnect_base_sec
@@ -91,6 +95,7 @@ class BinanceWsIngest:
                 raise
             except Exception as exc:
                 self.messages_err += 1
+                WS_ERRORS.labels(component="ws_ingest").inc()
                 log.warning("ws_disconnected", error=str(exc), reconnect_in=delay)
                 try:
                     await asyncio.wait_for(self._stop.wait(), timeout=delay)
@@ -116,4 +121,5 @@ class BinanceWsIngest:
                 await self._handle_message(raw)
             except Exception as exc:
                 self.messages_err += 1
+                WS_ERRORS.labels(component="ws_message").inc()
                 log.warning("ws_message_error", error=str(exc))

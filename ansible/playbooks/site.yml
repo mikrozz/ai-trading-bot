@@ -1,0 +1,7 @@
+---
+- name: Bootstrap AI Trading Bot host
+  hosts: trading
+  become: true
+  roles:
+    - role: docker_host
+    - role: trading_bot

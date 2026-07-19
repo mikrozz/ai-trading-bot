@@ -1,0 +1,22 @@
+---
+- name: Ensure docker package present (RedOS / RHEL-like)
+  ansible.builtin.package:
+    name:
+      - docker
+      - docker-compose
+    state: present
+  when: ansible_os_family == "RedHat"
+  ignore_errors: true
+
+- name: Ensure docker service enabled
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+  ignore_errors: true
+
+- name: Check docker available
+  ansible.builtin.command: docker version
+  register: docker_ver
+  changed_when: false
+  failed_when: docker_ver.rc != 0

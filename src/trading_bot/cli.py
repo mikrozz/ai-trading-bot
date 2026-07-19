@@ -22,6 +22,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Путь к env с ключами (по умолчанию ~/.config/trading-bot/binance_testnet.env)",
     )
+    parser.add_argument(
+        "--metrics-port",
+        type=int,
+        default=9108,
+        help="Prometheus /metrics port (0 = выкл)",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("version", help="Версия пакета")
@@ -552,6 +558,12 @@ def main(argv: list[str] | None = None) -> None:
 
         print(__version__)
         return
+
+    # метрики для долгоживущих команд
+    if args.command in {"ingest", "writer", "pipeline", "paper-live", "soak"} and args.metrics_port:
+        from trading_bot.metrics import start_metrics_server
+
+        start_metrics_server(args.metrics_port)
 
     if args.command == "smoke":
         raise SystemExit(asyncio.run(cmd_smoke(args.config, args.env_file)))

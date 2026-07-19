@@ -13,6 +13,7 @@ from trading_bot.features.orderbook import orderbook_feature_dict
 from trading_bot.logging_setup import get_logger
 from trading_bot.marketdata.book_state import BookStateStore
 from trading_bot.marketdata.ws_ingest import BinanceWsIngest
+from trading_bot.metrics import BOOK_UPDATES, PAPER_EQUITY, PAPER_FILLS
 from trading_bot.ml.dataset import load_klines_df
 from trading_bot.paper.engine import PaperEngine
 from trading_bot.risk.gates import RiskLimits
@@ -52,7 +53,9 @@ class LivePaperRunner:
         if "bookTicker" in et or (
             "b" in payload and "a" in payload and "B" in payload and "A" in payload
         ):
-            self.book_store.update_from_payload(payload)
+            book = self.book_store.update_from_payload(payload)
+            if book is not None:
+                BOOK_UPDATES.labels(symbol=book.symbol).inc()
             return
 
         if et != "kline" and "kline" not in et:
@@ -84,8 +87,14 @@ class LivePaperRunner:
         if len(self.history) > 5000:
             self.history = self.history.iloc[-5000:].reset_index(drop=True)
 
+        fills_before = len(self.engine.state.fills)
         result = self.engine.on_bar(self.history)
         self.closed_bars += 1
+        equity = float(result.get("equity") or self.engine.state.equity)
+        PAPER_EQUITY.labels(symbol=self.symbol).set(equity)
+        if len(self.engine.state.fills) > fills_before:
+            for fill in self.engine.state.fills[fills_before:]:
+                PAPER_FILLS.labels(symbol=self.symbol, side=fill.side).inc()
         book = self.book_store.get(self.symbol)
         ob = orderbook_feature_dict(book) if book else {}
         log.info(

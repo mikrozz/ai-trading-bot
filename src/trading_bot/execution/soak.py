@@ -9,6 +9,7 @@ from typing import Any
 
 from trading_bot.exchange.binance_spot import BinanceSpotClient
 from trading_bot.logging_setup import get_logger
+from trading_bot.metrics import ORDERS_TOTAL
 
 log = get_logger(__name__)
 
@@ -112,6 +113,7 @@ async def run_soak(
                 )
                 result.placed += 1
                 result.order_ids.append(order.order_id)
+                ORDERS_TOTAL.labels(action="place", symbol=symbol.upper(), mode="testnet").inc()
                 log.info(
                     "soak_placed",
                     order_id=order.order_id,
@@ -123,6 +125,7 @@ async def run_soak(
                 await asyncio.sleep(pause_sec)
                 await client.cancel_order(symbol=symbol, order_id=order.order_id)
                 result.cancelled += 1
+                ORDERS_TOTAL.labels(action="cancel", symbol=symbol.upper(), mode="testnet").inc()
                 log.info("soak_cancelled", order_id=order.order_id)
                 ok = True
                 break

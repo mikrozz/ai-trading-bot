@@ -1,5 +1,16 @@
-# Ansible (stub)
+# Ansible
 
-Следующий этап: roles `docker`, `trading_bot`, `monitoring` для RedOS 8.
+Идемпотентный bootstrap хоста под MVP.
 
-Пока деплой локально через `docker compose` (см. DEPLOYMENT.md).
+## Запуск (локально / RedOS)
+
+```bash
+cd /opt/ai-trading-bot/ansible
+ansible-playbook playbooks/site.yml
+```
+
+Roles:
+- `docker_host` — docker service
+- `trading_bot` — dirs, secrets mode, `docker compose up -d redis timescaledb`
+
+Секреты не копируются в git: ожидается `~/.config/trading-bot/binance_testnet.env`.

@@ -14,6 +14,7 @@ from redis.asyncio import Redis
 
 from trading_bot.features.orderbook import book_ticker_from_payload, orderbook_feature_dict
 from trading_bot.logging_setup import get_logger
+from trading_bot.metrics import WRITER_ERRORS, WRITER_ROWS
 
 log = get_logger(__name__)
 
@@ -210,6 +211,7 @@ class BatchWriter:
                         ],
                     )
                     self.written_trades += len(buf.trades)
+                    WRITER_ROWS.labels(table="md_trades").inc(len(buf.trades))
                 if buf.klines:
                     await conn.executemany(
                         """
@@ -228,6 +230,7 @@ class BatchWriter:
                         ],
                     )
                     self.written_klines += len(buf.klines)
+                    WRITER_ROWS.labels(table="md_klines").inc(len(buf.klines))
                 if buf.books:
                     await conn.executemany(
                         """
@@ -252,6 +255,7 @@ class BatchWriter:
                         ],
                     )
                     self.written_books += len(buf.books)
+                    WRITER_ROWS.labels(table="md_book_ticker").inc(len(buf.books))
         buf.clear()
 
     async def run(self, *, max_seconds: float | None = None) -> None:
@@ -298,6 +302,7 @@ class BatchWriter:
                                         buf.books.append(row)
                             except Exception as exc:
                                 self.errors += 1
+                                WRITER_ERRORS.inc()
                                 log.warning("parse_error", error=str(exc))
 
                 now = asyncio.get_event_loop().time()
@@ -310,6 +315,7 @@ class BatchWriter:
                         last_flush = now
                     except Exception as exc:
                         self.errors += 1
+                        WRITER_ERRORS.inc()
                         log.warning("flush_error", error=str(exc))
 
             if len(buf) > 0:

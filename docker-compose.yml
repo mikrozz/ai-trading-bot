@@ -29,6 +29,22 @@ services:
       timeout: 5s
       retries: 20
 
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+
   bot:
     build: .
     restart: unless-stopped
@@ -44,9 +60,12 @@ services:
       DATABASE_URL: postgresql://trading:trading@timescaledb:5432/trading
       EXECUTION_MODE: testnet
       MARKET_DATA_MODE: prod_public
-    command: ["trading-bot", "smoke"]
+    ports:
+      - "9108:9108"
+    command: ["trading-bot", "--metrics-port", "9108", "smoke"]
     profiles:
       - app
 
 volumes:
   tsdata:
+  promdata:

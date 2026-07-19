@@ -51,7 +51,11 @@ trading-bot train --symbol BTCUSDT --interval 5m
 trading-bot paper --symbol BTCUSDT --model data/models/xgb_btc_5m.joblib
 trading-bot paper-live --seconds 120 --symbol BTCUSDT
 trading-bot soak --cycles 3 --symbol BTCUSDT
+trading-bot --metrics-port 9108 paper-live --seconds 300
 ```
+
+Мониторинг: [MONITORING.md](MONITORING.md)  
+Ansible: [ansible/README.md](ansible/README.md)
 
 > `train`/`paper` — research tools. Sharpe/PnL не являются критерием приёмки MVP.
 

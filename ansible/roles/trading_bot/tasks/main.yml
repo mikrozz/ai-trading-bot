@@ -1,0 +1,50 @@
+---
+- name: Ensure app directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ trading_bot_root }}"
+    - "{{ trading_bot_root }}/data"
+    - "{{ trading_bot_root }}/data/models"
+    - "{{ trading_bot_root }}/logs"
+    - /root/.config/trading-bot
+
+- name: Ensure secrets directory mode
+  ansible.builtin.file:
+    path: /root/.config/trading-bot
+    state: directory
+    mode: "0700"
+
+- name: Check secrets file exists
+  ansible.builtin.stat:
+    path: "{{ trading_secrets_src }}"
+  register: secrets_stat
+
+- name: Fail if secrets missing
+  ansible.builtin.fail:
+    msg: "Secrets file missing: {{ trading_secrets_src }}"
+  when: not secrets_stat.stat.exists
+
+- name: Ensure secrets file mode 0600
+  ansible.builtin.file:
+    path: "{{ trading_secrets_src }}"
+    mode: "0600"
+
+- name: Start compose stack (redis + timescaledb)
+  ansible.builtin.command:
+    cmd: "docker compose up -d {{ trading_compose_services | join(' ') }}"
+    chdir: "{{ trading_bot_root }}"
+  register: compose_up
+  changed_when: "'Started' in compose_up.stdout or 'Creating' in compose_up.stdout"
+
+- name: Wait for redis health
+  ansible.builtin.command: docker compose ps --status running redis
+  args:
+    chdir: "{{ trading_bot_root }}"
+  register: redis_ps
+  until: redis_ps.rc == 0
+  retries: 12
+  delay: 5
+  changed_when: false
