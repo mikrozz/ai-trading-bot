@@ -34,7 +34,8 @@ services:
     restart: unless-stopped
     profiles: ["monitoring"]
     ports:
-      - "9090:9090"
+      # 9090–9093 заняты другими стеками на этом хосте
+      - "127.0.0.1:9094:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - promdata:/prometheus
@@ -44,6 +45,26 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --web.enable-lifecycle
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    depends_on:
+      - prometheus
+    ports:
+      # 3000/3001/3002 заняты другими Grafana на хосте
+      - "127.0.0.1:3003:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_ROOT_URL: http://127.0.0.1:3003
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
 
   bot:
     build: .
@@ -69,3 +90,4 @@ services:
 volumes:
   tsdata:
   promdata:
+  grafanadata:

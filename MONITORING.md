@@ -17,11 +17,26 @@ curl -s localhost:9108/metrics | grep trading_
 - `trading_book_updates_total`
 - `trading_risk_denies_total`
 
-## Prometheus (compose)
+## Prometheus + Grafana (compose)
 
 ```bash
-docker compose --profile monitoring up -d prometheus
-# UI: http://127.0.0.1:9090  (не публиковать наружу без VPN)
+docker compose --profile monitoring up -d prometheus grafana
+# Prometheus: http://127.0.0.1:9094
+# Grafana:    http://127.0.0.1:3003  (admin/admin — сменить сразу)
 ```
 
-Scrape: `host.docker.internal:9108` → процесс `trading-bot` на хосте.
+Порты только на localhost (на этом хосте 9090–9093/3000–3002 заняты другими стеками).  
+Dashboard **AI Trading Bot** подтягивается из provisioning.
+
+Scrape targets:
+- `host.docker.internal:9108` — ingest
+- `host.docker.internal:9109` — writer
+
+## systemd continuous pipeline
+
+```bash
+sudo bash /opt/ai-trading-bot/deploy/systemd/install.sh
+systemctl status trading-bot-ingest trading-bot-writer
+curl -s localhost:9108/metrics | grep trading_ws
+curl -s localhost:9109/metrics | grep trading_writer
+```

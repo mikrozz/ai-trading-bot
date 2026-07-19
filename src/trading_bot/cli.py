@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import signal
 import sys
 from pathlib import Path
 
@@ -34,11 +35,21 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("smoke", help="Smoke-check Binance (ping/time/account/openOrders)")
 
     ingest = sub.add_parser("ingest", help="Запуск WS ingest → Redis Streams")
-    ingest.add_argument("--seconds", type=int, default=30, help="Длительность прогона")
+    ingest.add_argument(
+        "--seconds",
+        type=int,
+        default=30,
+        help="Длительность прогона (0 = до SIGTERM/systemd)",
+    )
     ingest.add_argument("--no-redis", action="store_true", help="Без Redis")
 
     writer = sub.add_parser("writer", help="Batch writer Redis → TimescaleDB")
-    writer.add_argument("--seconds", type=int, default=30, help="Длительность прогона")
+    writer.add_argument(
+        "--seconds",
+        type=int,
+        default=30,
+        help="Длительность прогона (0 = до SIGTERM/systemd)",
+    )
 
     pipeline = sub.add_parser("pipeline", help="Ingest + writer параллельно (короткий прогон)")
     pipeline.add_argument("--seconds", type=int, default=20)
@@ -158,10 +169,29 @@ async def cmd_ingest(
         publisher=publisher,
     )
     task = asyncio.create_task(ingest.run())
+    stop_event = asyncio.Event()
+
+    def _signal_stop() -> None:
+        stop_event.set()
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _signal_stop)
+        except NotImplementedError:
+            pass
+
     try:
-        await asyncio.sleep(seconds)
+        if seconds > 0:
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=float(seconds))
+            except TimeoutError:
+                pass
+        else:
+            # seconds<=0 → работаем до SIGTERM (systemd)
+            await stop_event.wait()
         await ingest.stop()
-        await asyncio.wait_for(task, timeout=10)
+        await asyncio.wait_for(task, timeout=15)
     finally:
         if not task.done():
             task.cancel()
@@ -189,9 +219,34 @@ async def cmd_writer(config: Path | None, env_file: Path | None, seconds: int) -
 
     redis = from_url(settings.redis_url, decode_responses=True)
     writer = BatchWriter(redis=redis, database_url=settings.database_url)
+    max_seconds = float(seconds) if seconds > 0 else None
+    task = asyncio.create_task(writer.run(max_seconds=max_seconds))
+    stop_event = asyncio.Event()
+
+    def _signal_stop() -> None:
+        stop_event.set()
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _signal_stop)
+        except NotImplementedError:
+            pass
+
     try:
-        await writer.run(max_seconds=float(seconds))
+        if seconds > 0:
+            await task
+        else:
+            await stop_event.wait()
+            await writer.stop()
+            await asyncio.wait_for(task, timeout=30)
     finally:
+        if not task.done():
+            await writer.stop()
+            try:
+                await asyncio.wait_for(task, timeout=10)
+            except (TimeoutError, asyncio.CancelledError):
+                task.cancel()
         await redis.aclose()
 
     log.info(
@@ -206,6 +261,9 @@ async def cmd_writer(config: Path | None, env_file: Path | None, seconds: int) -
         f"errors={writer.errors}"
     )
     written = writer.written_trades + writer.written_klines + writer.written_books
+    # для continuous (seconds<=0) нулевая запись после короткого стопа допустима только если errors
+    if seconds <= 0:
+        return 0 if writer.errors == 0 else 1
     return 0 if writer.errors == 0 and written > 0 else 1
 
 

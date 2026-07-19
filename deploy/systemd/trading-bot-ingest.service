@@ -1,0 +1,23 @@
+[Unit]
+Description=AI Trading Bot WS ingest → Redis
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/ai-trading-bot
+Environment=PATH=/opt/ai-trading-bot/.venv/bin:/usr/local/bin:/usr/bin
+EnvironmentFile=-/root/.config/trading-bot/binance_testnet.env
+ExecStart=/opt/ai-trading-bot/.venv/bin/trading-bot --metrics-port 9108 ingest --seconds 0
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+# Safety
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

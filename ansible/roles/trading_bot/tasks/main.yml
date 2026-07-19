@@ -48,3 +48,25 @@
   retries: 12
   delay: 5
   changed_when: false
+
+- name: Install systemd units for ingest/writer
+  ansible.builtin.copy:
+    src: "{{ trading_bot_root }}/deploy/systemd/{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+    remote_src: true
+  loop:
+    - trading-bot-ingest.service
+    - trading-bot-writer.service
+  notify: Reload systemd trading units
+
+- name: Enable continuous ingest/writer
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop:
+    - trading-bot-ingest.service
+    - trading-bot-writer.service
+
