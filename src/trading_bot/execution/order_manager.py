@@ -76,12 +76,14 @@ class OrderManager:
                 "price": req.price,
             }
 
+        tif = None if req.order_type.upper() == "MARKET" else "GTC"
         result: OrderResult = await self.exchange.create_order(
             symbol=req.symbol,
             side=req.side,
             order_type=req.order_type,
             quantity=req.quantity,
             price=req.price,
+            time_in_force=tif,
             new_client_order_id=req.client_order_id,
         )
         log.info(

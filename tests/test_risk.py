@@ -29,6 +29,18 @@ def test_deny_position_fraction() -> None:
     assert "position_fraction" in result.reason
 
 
+def test_close_skips_position_fraction() -> None:
+    gate = HardRiskGate(RiskLimits(max_position_fraction=0.10))
+    state = _state(open_positions=1, position_notionals={"BTCUSDT": 100.0})
+    result = gate.check_new_order(
+        state,
+        symbol="BTCUSDT",
+        order_notional=100.0,
+        is_new_position=False,
+    )
+    assert result.decision == RiskDecision.ALLOW
+
+
 def test_deny_max_positions() -> None:
     gate = HardRiskGate(RiskLimits(max_open_positions=2))
     state = _state(open_positions=2)

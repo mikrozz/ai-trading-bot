@@ -39,6 +39,14 @@ class PaperConfig(BaseSettings):
     position_fraction: float = 0.10
 
 
+class LiveTestnetConfig(BaseSettings):
+    position_fraction: float = 0.05
+    prob_threshold: float = 0.60
+    min_hold_bars: int = 6
+    cooldown_bars: int = 3
+    max_orders_per_hour: int = 20
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file_encoding="utf-8",
@@ -67,6 +75,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     risk: RiskConfig = Field(default_factory=RiskConfig)
     paper: PaperConfig = Field(default_factory=PaperConfig)
+    live_testnet: LiveTestnetConfig = Field(default_factory=LiveTestnetConfig)
 
     fees_maker: float = 0.001
     fees_taker: float = 0.001
@@ -135,6 +144,7 @@ def build_settings(
 
     risk_raw = yaml_data.pop("risk", {}) or {}
     paper_raw = yaml_data.pop("paper", {}) or {}
+    live_testnet_raw = yaml_data.pop("live_testnet", {}) or {}
     fees = yaml_data.pop("fees", {}) or {}
     slippage = yaml_data.pop("slippage", {}) or {}
     yaml_data.pop("ingest", None)
@@ -159,4 +169,12 @@ def build_settings(
         settings.risk = RiskConfig(**risk_raw)
     if paper_raw:
         settings.paper = PaperConfig(**paper_raw)
+    if live_testnet_raw:
+        frac = float(live_testnet_raw.get("position_fraction", 0.05))
+        live_testnet_raw["position_fraction"] = min(frac, 0.05)
+        settings.live_testnet = LiveTestnetConfig(**live_testnet_raw)
+    else:
+        settings.live_testnet.position_fraction = min(
+            settings.live_testnet.position_fraction, 0.05
+        )
     return settings

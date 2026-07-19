@@ -78,6 +78,21 @@ MAINNET_CHECK_OK = Gauge(
     "trading_mainnet_check_ok",
     "Last mainnet dry-run check (1=ok)",
 )
+LIVE_EQUITY = Gauge(
+    "trading_live_equity",
+    "Live/testnet equity estimate from account",
+    ["symbol", "mode"],
+)
+LIVE_POSITION_QTY = Gauge(
+    "trading_live_position_qty",
+    "Live/testnet base position quantity",
+    ["symbol", "mode"],
+)
+LIVE_KILL_SWITCH = Gauge(
+    "trading_live_kill_switch",
+    "Live/testnet kill-switch active (1=on)",
+    ["symbol", "mode"],
+)
 
 _started = False
 

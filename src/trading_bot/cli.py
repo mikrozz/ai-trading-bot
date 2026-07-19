@@ -147,6 +147,31 @@ def build_parser() -> argparse.ArgumentParser:
     soak.add_argument("--cycles", type=int, default=3)
     soak.add_argument("--pause", type=float, default=1.0)
 
+    tlive = sub.add_parser(
+        "testnet-live",
+        help="Боевой testnet: сигналы модели → MARKET ордера",
+    )
+    tlive.add_argument("--symbol", default="BTCUSDT")
+    tlive.add_argument("--interval", default="5m")
+    tlive.add_argument(
+        "--model",
+        type=Path,
+        default=Path("data/models/xgb_btc_5m.joblib"),
+    )
+    tlive.add_argument(
+        "--seconds",
+        type=int,
+        default=120,
+        help="Длительность (0 = до SIGTERM/systemd)",
+    )
+    tlive.add_argument("--no-redis", action="store_true")
+    tlive.add_argument("--no-restore", action="store_true")
+    tlive.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Сигналы без реальных ордеров",
+    )
+
     risk = sub.add_parser("risk-demo", help="Демо hard risk gate")
     risk.add_argument("--equity", type=float, default=1000.0)
     risk.add_argument("--notional", type=float, default=50.0)
@@ -817,6 +842,90 @@ async def cmd_paper_live(
     return 0 if summary["messages_ok"] > 0 else 1
 
 
+async def cmd_testnet_live(
+    config: Path | None,
+    env_file: Path | None,
+    *,
+    symbol: str,
+    interval: str,
+    model_path: Path,
+    seconds: int,
+    no_redis: bool,
+    no_restore: bool,
+    dry_run: bool,
+) -> int:
+    from trading_bot.config import ExecutionMode
+    from trading_bot.execution.live_trader import LiveTraderConfig, run_testnet_live
+
+    settings = build_settings(config, env_file)
+    setup_logging(settings.log_level)
+    log = get_logger("testnet_live")
+
+    if settings.execution_mode == ExecutionMode.LIVE:
+        print("TESTNET_LIVE_FAIL execution_mode=live — отказ (только testnet)")
+        return 2
+    base = settings.binance_base_url.lower()
+    if "testnet" not in base and "binance.vision" not in base:
+        print(
+            f"TESTNET_LIVE_FAIL base_url looks like mainnet: {settings.binance_base_url}"
+        )
+        return 2
+    if not model_path.exists():
+        print(f"TESTNET_LIVE_FAIL model not found: {model_path}")
+        return 1
+
+    settings.require_trading_credentials()
+    lt = settings.live_testnet
+    frac = min(float(lt.position_fraction), 0.05)
+    cfg = LiveTraderConfig(
+        symbol=symbol,
+        interval=interval,
+        position_fraction=frac,
+        prob_threshold=lt.prob_threshold,
+        min_hold_bars=lt.min_hold_bars,
+        cooldown_bars=lt.cooldown_bars,
+        max_orders_per_hour=lt.max_orders_per_hour,
+        dry_run=dry_run,
+    )
+    risk_limits = RiskLimits(
+        daily_drawdown_limit=settings.risk.daily_drawdown_limit,
+        weekly_drawdown_limit=settings.risk.weekly_drawdown_limit,
+        max_position_fraction=min(settings.risk.max_position_fraction, frac),
+        max_open_positions=1,
+        stop_loss=settings.risk.stop_loss,
+        listing_ban_minutes=settings.risk.listing_ban_minutes,
+    )
+    client = BinanceSpotClient(
+        api_key=settings.binance_api_key,
+        api_secret=settings.binance_api_secret,
+        base_url=settings.binance_base_url,
+        timeout_sec=60.0,
+    )
+    try:
+        summary = await run_testnet_live(
+            client=client,
+            database_url=settings.database_url,
+            ws_base_url=settings.market_ws_base(),
+            redis_url=None if no_redis else settings.redis_url,
+            model_path=model_path,
+            cfg=cfg,
+            risk_limits=risk_limits,
+            seconds=seconds,
+            restore_state=not no_restore,
+        )
+    finally:
+        await client.close()
+
+    log.info("testnet_live_done", **summary)
+    print(
+        f"TESTNET_LIVE_OK closed_bars={summary['closed_bars']} "
+        f"equity={summary['equity']:.4f} orders={summary['orders_placed']} "
+        f"pos_qty={summary['position_qty']:.8f} dry_run={int(summary['dry_run'])} "
+        f"ws_msg={summary['messages_ok']}"
+    )
+    return 0
+
+
 async def cmd_soak(
     config: Path | None,
     env_file: Path | None,
@@ -894,7 +1003,14 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     # метрики для долгоживущих команд
-    if args.command in {"ingest", "writer", "pipeline", "paper-live", "soak"} and args.metrics_port:
+    if args.command in {
+        "ingest",
+        "writer",
+        "pipeline",
+        "paper-live",
+        "testnet-live",
+        "soak",
+    } and args.metrics_port:
         from trading_bot.metrics import start_metrics_server
 
         start_metrics_server(args.metrics_port)
@@ -1039,6 +1155,23 @@ def main(argv: list[str] | None = None) -> None:
                     args.symbol,
                     args.cycles,
                     args.pause,
+                )
+            )
+        )
+
+    if args.command == "testnet-live":
+        raise SystemExit(
+            asyncio.run(
+                cmd_testnet_live(
+                    args.config,
+                    args.env_file,
+                    symbol=args.symbol,
+                    interval=args.interval,
+                    model_path=args.model,
+                    seconds=args.seconds,
+                    no_redis=args.no_redis,
+                    no_restore=args.no_restore,
+                    dry_run=args.dry_run,
                 )
             )
         )

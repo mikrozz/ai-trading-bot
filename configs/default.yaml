@@ -33,6 +33,13 @@ paper:
   cooldown_bars: 3      # пауза после закрытия перед новым входом
   position_fraction: 0.10
 
+live_testnet:
+  position_fraction: 0.05   # жёсткий cap 5% (код не принимает выше)
+  prob_threshold: 0.60
+  min_hold_bars: 6
+  cooldown_bars: 3
+  max_orders_per_hour: 20
+
 ingest:
   depth_levels: 20
   redis_stream_maxlen: 100000

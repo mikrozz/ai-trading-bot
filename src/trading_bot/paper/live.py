@@ -159,12 +159,19 @@ class LivePaperRunner:
             "close": float(k["c"]),
             "volume": float(k["v"]),
         }
+        row_ts = pd.Timestamp(row["ts"])
         if not self.history.empty:
             last_ts = pd.Timestamp(self.history.iloc[-1]["ts"])
-            if pd.Timestamp(row["ts"]) <= last_ts:
+            # closed kline несёт open-time; тот же ts уже в history после bootstrap
+            if row_ts < last_ts:
+                return
+            if row_ts == last_ts:
+                self.history = self.history.iloc[:-1].reset_index(drop=True)
+            elif getattr(self, "_last_closed_open_ts", None) is not None and row_ts <= self._last_closed_open_ts:
                 return
 
         self.history = pd.concat([self.history, pd.DataFrame([row])], ignore_index=True)
+        self._last_closed_open_ts = row_ts
         if len(self.history) > 5000:
             self.history = self.history.iloc[-5000:].reset_index(drop=True)
 

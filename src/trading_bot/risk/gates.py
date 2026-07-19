@@ -110,14 +110,16 @@ class HardRiskGate:
         if state.equity <= 0:
             return RiskCheckResult(RiskDecision.DENY, "equity_non_positive")
 
-        max_notional = state.equity * self.limits.max_position_fraction
-        current = state.position_notionals.get(symbol.upper(), 0.0)
-        if current + order_notional > max_notional + 1e-9:
-            return RiskCheckResult(
-                RiskDecision.DENY,
-                f"position_fraction order={order_notional:.4f} "
-                f"current={current:.4f} max={max_notional:.4f}",
-            )
+        # fraction только на открытие/увеличение; закрытие (SELL) не режем
+        if is_new_position:
+            max_notional = state.equity * self.limits.max_position_fraction
+            current = state.position_notionals.get(symbol.upper(), 0.0)
+            if current + order_notional > max_notional + 1e-9:
+                return RiskCheckResult(
+                    RiskDecision.DENY,
+                    f"position_fraction order={order_notional:.4f} "
+                    f"current={current:.4f} max={max_notional:.4f}",
+                )
 
         return RiskCheckResult(RiskDecision.ALLOW, "ok")
 
