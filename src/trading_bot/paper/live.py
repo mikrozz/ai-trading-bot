@@ -48,6 +48,8 @@ def save_paper_state(engine: PaperEngine, path: Path) -> None:
         "bars_seen": st.bars_seen,
         "signals_long": st.signals_long,
         "signals_flat": st.signals_flat,
+        "bars_in_position": engine.bars_in_position,
+        "bars_since_close": engine.bars_since_close,
         "day_start_equity": engine.risk_state.day_start_equity,
         "week_start_equity": engine.risk_state.week_start_equity,
         "kill_switch": engine.risk_state.kill_switch,
@@ -65,6 +67,13 @@ def load_paper_state(engine: PaperEngine, path: Path) -> bool:
     engine.state.bars_seen = int(data.get("bars_seen", 0))
     engine.state.signals_long = int(data.get("signals_long", 0))
     engine.state.signals_flat = int(data.get("signals_flat", 0))
+    engine.bars_in_position = int(data.get("bars_in_position", 0))
+    pos = data.get("position")
+    # старый state без ключа: в позиции → cooldown 0; иначе оставляем default engine
+    if "bars_since_close" in data:
+        engine.bars_since_close = int(data["bars_since_close"])
+    elif pos:
+        engine.bars_since_close = 0
     engine.risk_state.equity = engine.state.equity
     engine.risk_state.day_start_equity = float(
         data.get("day_start_equity", engine.state.equity)
@@ -73,7 +82,6 @@ def load_paper_state(engine: PaperEngine, path: Path) -> bool:
         data.get("week_start_equity", engine.state.equity)
     )
     engine.risk_state.kill_switch = bool(data.get("kill_switch", False))
-    pos = data.get("position")
     if pos:
         opened = datetime.fromisoformat(pos["opened_at"])
         if opened.tzinfo is None:

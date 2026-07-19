@@ -195,7 +195,9 @@ async def cmd_latency(
         print("LATENCY_FAIL no targets")
         return 2
 
-    if metrics_port > 0:
+    # oneshot не должен занимать :9108 (ingest). Метрики — только с hold для scrape.
+    expose_metrics = metrics_port > 0 and hold_sec > 0
+    if expose_metrics:
         start_metrics_server(metrics_port)
 
     result = await run_latency_probe(
@@ -204,24 +206,32 @@ async def cmd_latency(
         symbol=symbol,
         rounds=rounds,
     )
-    for s in result.summaries:
-        LATENCY_PROBE_P50_MS.labels(target=s.target, endpoint=s.endpoint).set(s.p50_ms)
-        LATENCY_PROBE_P95_MS.labels(target=s.target, endpoint=s.endpoint).set(s.p95_ms)
-        LATENCY_PROBE_ERRORS.labels(target=s.target, endpoint=s.endpoint).set(s.errors)
+    if expose_metrics:
+        for s in result.summaries:
+            LATENCY_PROBE_P50_MS.labels(target=s.target, endpoint=s.endpoint).set(
+                s.p50_ms
+            )
+            LATENCY_PROBE_P95_MS.labels(target=s.target, endpoint=s.endpoint).set(
+                s.p95_ms
+            )
+            LATENCY_PROBE_ERRORS.labels(target=s.target, endpoint=s.endpoint).set(
+                s.errors
+            )
 
     print(format_latency_table(result))
     mainnet_rows = [s for s in result.summaries if s.target == "mainnet"]
     testnet_rows = [s for s in result.summaries if s.target == "testnet"]
     # go-live gate: mainnet критичен; testnet с docker01 может флапать
-    mainnet_ok = bool(mainnet_rows) and all(s.errors == 0 for s in mainnet_rows)
-    if "mainnet" not in wanted:
-        mainnet_ok = all(s.errors == 0 for s in result.summaries)
+    if "mainnet" in wanted:
+        gate_ok = bool(mainnet_rows) and all(s.errors == 0 for s in mainnet_rows)
+    else:
+        gate_ok = bool(result.summaries) and all(s.errors == 0 for s in result.summaries)
     p95_rest = [
         s.p95_ms
         for s in mainnet_rows
         if s.endpoint in {"ping", "time", "ticker_price"} and s.ok > 0
     ]
-    verdict = "LATENCY_OK" if mainnet_ok else "LATENCY_FAIL"
+    verdict = "LATENCY_OK" if gate_ok else "LATENCY_FAIL"
     extra = ""
     if p95_rest:
         extra = f" mainnet_rest_p95_ms={max(p95_rest):.1f}"
@@ -229,10 +239,12 @@ async def cmd_latency(
             extra += " WARN_high_latency"
     if testnet_rows and any(s.errors for s in testnet_rows):
         extra += " testnet_partial_errors"
+    if metrics_port > 0 and hold_sec <= 0:
+        extra += " metrics_skipped_no_hold"
     print(f"{verdict} host={result.host_hint} rounds={rounds}{extra}")
     if hold_sec > 0:
         await asyncio.sleep(hold_sec)
-    return 0 if mainnet_ok else 1
+    return 0 if gate_ok else 1
 
 
 async def cmd_mainnet_check(
@@ -269,12 +281,9 @@ async def cmd_mainnet_check(
             "(BINANCE_MAINNET_API_KEY/SECRET) — read-only permissions."
         )
         return 2
-    if require_signed and not result.signed_ok:
-        MAINNET_CHECK_OK.set(0)
-        print("MAINNET_CHECK_FAIL signed_failed")
-        return 1
 
-    ok = result.public_ok and (not require_signed or result.signed_ok)
+    # ключи были — signed обязан пройти (иначе ложный OK на битых/testnet ключах)
+    ok = result.ok if result.signed_attempted or require_signed else result.public_ok
     MAINNET_CHECK_OK.set(1.0 if ok else 0.0)
     tag = "MAINNET_CHECK_OK" if ok else "MAINNET_CHECK_FAIL"
     mode = "public+signed" if result.signed_attempted else "public_only"

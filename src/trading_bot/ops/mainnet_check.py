@@ -86,7 +86,25 @@ def load_mainnet_credentials(
     return key, secret
 
 
-async def _timed(client: BinanceSpotClient, name: str, coro) -> CheckItem:
+def _geo_hint_from_error(exc: BaseException) -> bool:
+    text = repr(exc).lower()
+    markers = (
+        "451",
+        "403",
+        "restricted",
+        "unavailable for legal",
+        "cloudfront",
+        "not available in your country",
+        "blocked",
+    )
+    if isinstance(exc, BinanceAPIError):
+        if exc.status in {403, 418, 451}:
+            return True
+        text = f"{text} {exc.payload!r}".lower()
+    return any(m in text for m in markers)
+
+
+async def _timed(name: str, coro) -> CheckItem:
     import time
 
     t0 = time.perf_counter()
@@ -97,18 +115,18 @@ async def _timed(client: BinanceSpotClient, name: str, coro) -> CheckItem:
         return CheckItem(name=name, ok=True, detail=detail, latency_ms=ms)
     except BinanceAPIError as exc:
         ms = (time.perf_counter() - t0) * 1000.0
-        payload = exc.payload
-        msg = str(payload)
-        geo = exc.status in {403, 418, 451} or "restricted" in msg.lower()
+        geo = _geo_hint_from_error(exc)
         return CheckItem(
             name=name,
             ok=False,
-            detail=f"status={exc.status} geo_hint={geo} payload={payload!r}"[:300],
+            detail=f"status={exc.status} geo_hint={geo} payload={exc.payload!r}"[:300],
             latency_ms=ms,
         )
     except Exception as exc:
         ms = (time.perf_counter() - t0) * 1000.0
-        return CheckItem(name=name, ok=False, detail=repr(exc)[:300], latency_ms=ms)
+        geo = _geo_hint_from_error(exc)
+        detail = f"geo_hint={geo} error={exc!r}"[:300]
+        return CheckItem(name=name, ok=False, detail=detail, latency_ms=ms)
 
 
 def _summarize_payload(name: str, data: Any) -> str:
@@ -166,13 +184,15 @@ async def run_mainnet_check(
             ("ticker_price", lambda: client.ticker_price(symbol)),
             ("exchange_info", lambda: client.exchange_info(symbol)),
         ]
+        public_items: list[CheckItem] = []
         for name, factory in public_factories:
-            item = await _timed(client, name, factory())
+            item = await _timed(name, factory())
+            public_items.append(item)
             result.items.append(item)
             if not item.ok and "geo_hint=True" in item.detail:
                 result.geo_blocked = True
 
-        result.public_ok = all(i.ok for i in result.items)
+        result.public_ok = all(i.ok for i in public_items)
         if not result.public_ok:
             result.notes.append("public_endpoints_failed")
 
@@ -180,16 +200,16 @@ async def run_mainnet_check(
             result.signed_attempted = True
             result.notes.append("signed_read_only_account_openOrders")
             signed_items = [
-                await _timed(
-                    client, "account", client.account(omit_zero_balances=True)
-                ),
-                await _timed(client, "open_orders", client.open_orders(symbol)),
+                await _timed("account", client.account(omit_zero_balances=True)),
+                await _timed("open_orders", client.open_orders(symbol)),
             ]
             result.items.extend(signed_items)
             result.signed_ok = all(i.ok for i in signed_items)
             for item in signed_items:
                 if not item.ok and "geo_hint=True" in item.detail:
                     result.geo_blocked = True
+            if not result.signed_ok:
+                result.notes.append("signed_failed")
         else:
             result.notes.append("signed_skipped_no_mainnet_keys")
             if require_signed:

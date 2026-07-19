@@ -116,14 +116,27 @@ async def _time_call(
 
 
 async def _ws_first_message_ms(ws_url: str, timeout_sec: float = 10.0) -> float:
-    """Время до первого WS-сообщения (connect + first frame)."""
+    """Время до первого data-frame (TEXT/BINARY); PING/PONG пропускаем."""
     t0 = time.perf_counter()
     timeout = aiohttp.ClientTimeout(total=timeout_sec)
+    deadline = time.perf_counter() + timeout_sec
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.ws_connect(ws_url, heartbeat=20.0) as ws:
-            msg = await asyncio.wait_for(ws.receive(), timeout=timeout_sec)
-            if msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.ERROR):
-                raise RuntimeError(f"WS closed/error: {msg.type}")
+            while True:
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0:
+                    raise TimeoutError("WS first data frame timeout")
+                msg = await asyncio.wait_for(ws.receive(), timeout=remaining)
+                if msg.type in (aiohttp.WSMsgType.TEXT, aiohttp.WSMsgType.BINARY):
+                    break
+                if msg.type in (
+                    aiohttp.WSMsgType.CLOSE,
+                    aiohttp.WSMsgType.CLOSING,
+                    aiohttp.WSMsgType.CLOSED,
+                    aiohttp.WSMsgType.ERROR,
+                ):
+                    raise RuntimeError(f"WS closed/error: {msg.type}")
+                # PING/PONG/CONTINUATION — ждём data
     return (time.perf_counter() - t0) * 1000.0
 
 
