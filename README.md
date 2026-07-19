@@ -7,9 +7,10 @@
 - Exchange adapter `BinanceSpotClient` (REST, signed)
 - Hard risk gate (DD / position / listing ban / kill-switch / stop-loss)
 - Order manager (paper / testnet)
-- WS ingest skeleton → Redis Streams
+- WS ingest → Redis Streams → batch writer → TimescaleDB
+- Feature engineering (24 признака на klines)
 - Docker Compose: Redis + TimescaleDB
-- CLI: `smoke`, `ingest`, `risk-demo`
+- CLI: `smoke`, `ingest`, `writer`, `pipeline`, `features`, `risk-demo`
 
 ## Секреты
 
@@ -32,6 +33,7 @@ pip install -e ".[dev]"
 
 trading-bot smoke
 trading-bot risk-demo
+trading-bot features --symbol BTCUSDT --interval 5m
 pytest -q
 ```
 
@@ -39,7 +41,7 @@ pytest -q
 
 ```bash
 docker compose up -d redis timescaledb
-trading-bot ingest --seconds 20
+trading-bot pipeline --seconds 20   # ingest + writer E2E
 ```
 
 ## Режимы
