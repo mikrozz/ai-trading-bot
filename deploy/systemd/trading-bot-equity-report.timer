@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily equity report for AI Trading Bot (09:00 MSK)
+
+[Timer]
+OnCalendar=*-*-* 09:00:00
+Persistent=true
+RandomizedDelaySec=2m
+
+[Install]
+WantedBy=timers.target

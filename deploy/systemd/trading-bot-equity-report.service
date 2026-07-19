@@ -1,0 +1,15 @@
+[Unit]
+Description=AI Trading Bot daily equity report (testnet-live)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/ai-trading-bot
+Environment=PATH=/opt/ai-trading-bot/.venv/bin:/usr/local/bin:/usr/bin
+Environment=HTTPS_PROXY=http://192.168.10.155:3128
+Environment=TELEGRAM_TOKEN_FILE=/opt/network-monitor/secrets/telegram_bot_token
+Environment=TELEGRAM_CHAT_ID=608509788
+ExecStart=/opt/ai-trading-bot/deploy/daily-equity-report.sh
+Nice=10

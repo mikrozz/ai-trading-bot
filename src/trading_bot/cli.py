@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import signal
 import sys
 from pathlib import Path
@@ -68,6 +69,38 @@ def build_parser() -> argparse.ArgumentParser:
         "--require-signed",
         action="store_true",
         help="Требовать успешный signed account/openOrders",
+    )
+
+    equity_report = sub.add_parser(
+        "daily-equity-report",
+        help="Дневной отчёт equity (testnet-live) → файл + Telegram",
+    )
+    equity_report.add_argument("--symbol", default="BTCUSDT")
+    equity_report.add_argument("--mode", default="testnet")
+    equity_report.add_argument(
+        "--state",
+        type=Path,
+        default=Path("data/live_state_BTCUSDT.json"),
+    )
+    equity_report.add_argument(
+        "--metrics-url",
+        default="http://127.0.0.1:9111/metrics",
+    )
+    equity_report.add_argument("--prom-url", default="http://127.0.0.1:9091")
+    equity_report.add_argument(
+        "--report-dir",
+        type=Path,
+        default=Path("data/reports"),
+    )
+    equity_report.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Только локальный файл, без Telegram",
+    )
+    equity_report.add_argument(
+        "--no-telegram",
+        action="store_true",
+        help="Не отправлять в Telegram",
     )
 
     ingest = sub.add_parser("ingest", help="Запуск WS ingest → Redis Streams")
@@ -1060,6 +1093,37 @@ def main(argv: list[str] | None = None) -> None:
                     symbol=args.symbol,
                     mainnet_env=args.mainnet_env,
                     require_signed=args.require_signed,
+                )
+            )
+        )
+
+    if args.command == "daily-equity-report":
+        from argparse import Namespace
+
+        from trading_bot.ops.daily_equity_report import run_report
+
+        raise SystemExit(
+            run_report(
+                Namespace(
+                    symbol=args.symbol,
+                    mode=args.mode,
+                    state=args.state,
+                    metrics_url=args.metrics_url,
+                    prom_url=args.prom_url,
+                    report_dir=args.report_dir,
+                    dry_run=bool(args.dry_run),
+                    no_telegram=bool(args.no_telegram),
+                    token_file=Path(
+                        os.environ.get(
+                            "TELEGRAM_TOKEN_FILE",
+                            "/opt/network-monitor/secrets/telegram_bot_token",
+                        )
+                    ),
+                    chat_id=os.environ.get("TELEGRAM_CHAT_ID", "608509788"),
+                    proxy=os.environ.get("HTTPS_PROXY", "http://192.168.10.155:3128"),
+                    webhook_url=os.environ.get(
+                        "TELEGRAM_WEBHOOK_URL", "http://127.0.0.1:9999/"
+                    ),
                 )
             )
         )

@@ -16,11 +16,27 @@ systemd экспортеры на хосте:
 |------|--------|
 | 9108 | `trading-bot-ingest` |
 | 9109 | `trading-bot-writer` |
-| 9110 | `trading-bot-paper-live` |
+| 9110 | `trading-bot-paper-live` (stopped; legacy) |
+| 9111 | `trading-bot-testnet-live` (active) |
 
 ```bash
-curl -s http://192.168.10.155:9110/metrics | grep trading_paper
-systemctl status trading-bot-ingest trading-bot-writer trading-bot-paper-live
+curl -s http://192.168.10.155:9111/metrics | grep trading_live
+systemctl status trading-bot-ingest trading-bot-writer trading-bot-testnet-live
+```
+
+## Daily equity report
+
+- Script: `deploy/daily-equity-report.sh` / `trading-bot daily-equity-report`
+- Local files: `data/reports/equity-BTCUSDT-YYYY-MM-DD.txt` and `...-latest.txt`
+- Timer: `trading-bot-equity-report.timer` — ежедневно **09:00 MSK**
+- Telegram: Bot API через token file `/opt/network-monitor/secrets/telegram_bot_token` + tinyproxy `:3128`; fallback POST на telegram-webhook `http://127.0.0.1:9999/` (тот же путь, что Alertmanager `telegram=yes`)
+
+```bash
+# dry-run (только файл)
+bash /opt/ai-trading-bot/deploy/daily-equity-report.sh --dry-run
+# реальная отправка
+systemctl start trading-bot-equity-report.service
+systemctl list-timers trading-bot-equity-report.timer
 ```
 
 Scrape в центральный Prometheus:  

@@ -46,6 +46,17 @@ groups:
           summary: "Paper kill-switch активен"
           description: "symbol={{ $labels.symbol }} — торговля остановлена risk gate"
 
+      - alert: TradingBotLiveKillSwitch
+        expr: trading_live_kill_switch > 0
+        for: 1m
+        labels:
+          severity: critical
+          telegram: "yes"
+          alert_group: ai-trading-bot
+        annotations:
+          summary: "Live/testnet kill-switch активен"
+          description: "mode={{ $labels.mode }} symbol={{ $labels.symbol }} — торговля остановлена risk gate"
+
       - alert: TradingBotPaperEquityDrop
         expr: |
           (
