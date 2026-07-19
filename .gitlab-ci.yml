@@ -1,0 +1,25 @@
+stages:
+  - lint
+  - test
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+cache:
+  paths:
+    - .cache/pip
+    - .venv/
+
+lint:
+  stage: lint
+  image: python:3.11-slim
+  script:
+    - pip install ruff
+    - ruff check src tests
+
+test:
+  stage: test
+  image: python:3.11-slim
+  script:
+    - pip install -e ".[dev]"
+    - pytest -q

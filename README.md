@@ -1,0 +1,58 @@
+# AI Trading Bot MVP
+
+Автономный spot-контур под **Binance Spot Testnet** (ТЗ MVP v0.2).
+
+## Что есть сейчас
+
+- Exchange adapter `BinanceSpotClient` (REST, signed)
+- Hard risk gate (DD / position / listing ban / kill-switch / stop-loss)
+- Order manager (paper / testnet)
+- WS ingest skeleton → Redis Streams
+- Docker Compose: Redis + TimescaleDB
+- CLI: `smoke`, `ingest`, `risk-demo`
+
+## Секреты
+
+Ключи **не в git**. Локально:
+
+```bash
+mkdir -p ~/.config/trading-bot && chmod 700 ~/.config/trading-bot
+# файл ~/.config/trading-bot/binance_testnet.env (chmod 600)
+```
+
+См. `.env.example`.
+
+## Быстрый старт
+
+```bash
+cd /opt/ai-trading-bot
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+
+trading-bot smoke
+trading-bot risk-demo
+pytest -q
+```
+
+Инфра:
+
+```bash
+docker compose up -d redis timescaledb
+trading-bot ingest --seconds 20
+```
+
+## Режимы
+
+| Режим | Назначение |
+|-------|------------|
+| `execution_mode=testnet` | Ордера на testnet.binance.vision |
+| `execution_mode=paper` | Virtual portfolio, без ордеров |
+| `market_data_mode=prod_public` | Публичные prod WS/REST для данных |
+
+## Документы
+
+- [ARCHITECTURE.md](ARCHITECTURE.md)
+- [DEPLOYMENT.md](DEPLOYMENT.md)
+- [TRADING.md](TRADING.md)
+- [RUNBOOK.md](RUNBOOK.md)
