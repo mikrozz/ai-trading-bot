@@ -56,7 +56,7 @@ trading-bot --metrics-port 9108 paper-live --seconds 300
 
 Мониторинг: [MONITORING.md](MONITORING.md)  
 Ansible: [ansible/README.md](ansible/README.md)  
-GitLab: [docs/GITLAB.md](docs/GITLAB.md)  
+GitHub/CI: [docs/GITLAB.md](docs/GITLAB.md) · Actions: `.github/workflows/ci.yml`  
 systemd: `deploy/systemd/install.sh`
 
 > `train`/`paper` — research tools. Sharpe/PnL не являются критерием приёмки MVP.

@@ -3,7 +3,8 @@
 Remote сейчас: **GitHub** `git@github.com:mikrozz/ai-trading-bot.git`  
 Репозиторий: https://github.com/mikrozz/ai-trading-bot
 
-В репо лежит [`.gitlab-ci.yml`](../.gitlab-ci.yml) (lint → test → build) — на GitHub он **сам не запустится**. Для GitHub нужен `.github/workflows/` (можно добавить отдельно).
+CI на GitHub: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) — lint → test → build (Docker).  
+[`.gitlab-ci.yml`](../.gitlab-ci.yml) оставлен на случай переноса на GitLab.
 
 ## Если переносите на GitLab
 
