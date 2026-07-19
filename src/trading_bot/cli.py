@@ -150,6 +150,31 @@ def build_parser() -> argparse.ArgumentParser:
     risk = sub.add_parser("risk-demo", help="Демо hard risk gate")
     risk.add_argument("--equity", type=float, default=1000.0)
     risk.add_argument("--notional", type=float, default=50.0)
+
+    load = sub.add_parser(
+        "loadtest",
+        help="Нагрузочные бенчмарки hot-path (без ордеров на бирже)",
+    )
+    load.add_argument(
+        "--profile",
+        choices=("all", "cpu", "redis", "db"),
+        default="all",
+        help="all=cpu+redis+db",
+    )
+    load.add_argument(
+        "--model",
+        type=Path,
+        default=Path("data/models/xgb_btc_5m.joblib"),
+    )
+    load.add_argument("--parse-n", type=int, default=80_000)
+    load.add_argument("--redis-n", type=int, default=15_000)
+    load.add_argument("--db-n", type=int, default=8_000)
+    load.add_argument("--live-bars", type=int, default=150)
+    load.add_argument(
+        "--no-gates",
+        action="store_true",
+        help="Не валить exit code при soft gate fail",
+    )
     return parser
 
 
@@ -294,6 +319,49 @@ async def cmd_mainnet_check(
     )
     print("notes: " + ", ".join(result.notes))
     return 0 if ok else 1
+
+
+async def cmd_loadtest(
+    config: Path | None,
+    env_file: Path | None,
+    *,
+    profile: str,
+    model_path: Path,
+    parse_n: int,
+    redis_n: int,
+    db_n: int,
+    live_bars: int,
+    no_gates: bool,
+) -> int:
+    from trading_bot.ops.loadtest import (
+        evaluate_gates,
+        format_loadtest_table,
+        run_loadtest,
+    )
+
+    settings = build_settings(config, env_file)
+    setup_logging(settings.log_level)
+    report = await run_loadtest(
+        model_path=model_path,
+        redis_url=settings.redis_url if profile in {"all", "redis"} else None,
+        database_url=settings.database_url if profile in {"all", "db"} else None,
+        profile=profile,
+        parse_n=parse_n,
+        redis_n=redis_n,
+        db_n=db_n,
+        live_bars=live_bars,
+    )
+    print(format_loadtest_table(report))
+    gates = evaluate_gates(report)
+    if gates:
+        print("GATES_FAIL: " + "; ".join(gates))
+        if not no_gates:
+            return 1
+    tag = "LOADTEST_OK" if report.ok and not gates else "LOADTEST_WARN"
+    if not report.ok:
+        tag = "LOADTEST_FAIL"
+    print(f"{tag} profile={profile} benches={len(report.results)} host={report.host_hint}")
+    return 0 if (report.ok and (no_gates or not gates)) else 1
 
 
 async def cmd_smoke(config: Path | None, env_file: Path | None) -> int:
@@ -833,6 +901,23 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "smoke":
         raise SystemExit(asyncio.run(cmd_smoke(args.config, args.env_file)))
+
+    if args.command == "loadtest":
+        raise SystemExit(
+            asyncio.run(
+                cmd_loadtest(
+                    args.config,
+                    args.env_file,
+                    profile=args.profile,
+                    model_path=args.model,
+                    parse_n=args.parse_n,
+                    redis_n=args.redis_n,
+                    db_n=args.db_n,
+                    live_bars=args.live_bars,
+                    no_gates=args.no_gates,
+                )
+            )
+        )
 
     if args.command == "latency":
         raise SystemExit(
